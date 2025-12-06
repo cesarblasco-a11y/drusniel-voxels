@@ -34,3 +34,21 @@ pub trait Voxel {
     fn is_solid(&self) -> bool;
     fn atlas_index(&self) -> u8;
 }
+
+impl Voxel for VoxelType {
+    fn is_solid(&self) -> bool {
+        *self != VoxelType::Air
+    }
+
+    fn atlas_index(&self) -> u8 {
+        match self {
+            VoxelType::Air => 0,
+            VoxelType::TopSoil => 0,
+            VoxelType::SubSoil => 1,
+            VoxelType::Rock => 2,
+            VoxelType::Bedrock => 3,
+            VoxelType::Sand => 4,
+            VoxelType::Clay => 5,
+        }
+    }
+}

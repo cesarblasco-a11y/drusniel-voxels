@@ -5,6 +5,11 @@ use crate::voxel::chunk::Chunk;
 use crate::voxel::types::{VoxelType, Voxel};
 use crate::voxel::world::VoxelWorld;
 
+#[derive(Component)]
+pub struct ChunkMesh {
+    pub chunk_position: IVec3,
+}
+
 #[derive(Copy, Clone, Debug)]
 pub enum Face {
     Top,
@@ -212,10 +217,14 @@ fn add_face(
     mesh_data.uvs.push([u_max, v_min]);
     mesh_data.uvs.push([u_min, v_min]);
     
+    // Reverse winding order to CCW (0, 2, 1) and (0, 3, 2)
+    // Current vertices were defined in a way that resulted in CW winding for (0, 1, 2)
+    
     mesh_data.indices.push(start_idx);
+    mesh_data.indices.push(start_idx + 2);
     mesh_data.indices.push(start_idx + 1);
-    mesh_data.indices.push(start_idx + 2);
-    mesh_data.indices.push(start_idx + 2);
-    mesh_data.indices.push(start_idx + 3);
+    
     mesh_data.indices.push(start_idx);
+    mesh_data.indices.push(start_idx + 3);
+    mesh_data.indices.push(start_idx + 2);
 }
