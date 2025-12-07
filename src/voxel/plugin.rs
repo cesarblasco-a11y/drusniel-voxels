@@ -182,6 +182,80 @@ fn is_dungeon_wall(world_x: i32, world_y: i32, world_z: i32) -> bool {
     false
 }
 
+/// Check if a tree should spawn at this location
+fn should_spawn_tree(world_x: i32, world_z: i32, terrain_height: i32) -> bool {
+    // Trees only spawn above water level on grass
+    if terrain_height <= WATER_LEVEL + 2 {
+        return false;
+    }
+    
+    // Use hash to determine tree placement - sparse distribution
+    let tree_noise = hash(world_x.wrapping_mul(7), world_z.wrapping_mul(13));
+    
+    // About 2% chance per block
+    tree_noise > 0.98
+}
+
+/// Get tree height at this location (for consistent tree generation)
+fn get_tree_height(world_x: i32, world_z: i32) -> i32 {
+    let h = hash(world_x.wrapping_add(1000), world_z.wrapping_add(2000));
+    3 + (h * 3.0) as i32 // Height between 3 and 5
+}
+
+/// Check if a position is part of a tree trunk
+fn is_tree_trunk(world_x: i32, world_y: i32, world_z: i32, terrain_height: i32) -> bool {
+    if !should_spawn_tree(world_x, world_z, terrain_height) {
+        return false;
+    }
+    
+    let trunk_height = get_tree_height(world_x, world_z);
+    let trunk_bottom = terrain_height + 1;
+    let trunk_top = trunk_bottom + trunk_height;
+    
+    world_y >= trunk_bottom && world_y < trunk_top
+}
+
+/// Check if a position is part of tree leaves
+fn is_tree_leaves(world_x: i32, world_y: i32, world_z: i32) -> bool {
+    // Check nearby positions for tree trunks
+    let radius = 3;
+    
+    for dx in -radius..=radius {
+        for dz in -radius..=radius {
+            let check_x = world_x + dx;
+            let check_z = world_z + dz;
+            
+            let check_height = get_terrain_height(check_x, check_z);
+            
+            if should_spawn_tree(check_x, check_z, check_height) {
+                let trunk_height = get_tree_height(check_x, check_z);
+                let trunk_top = check_height + 1 + trunk_height;
+                let leaf_center_y = trunk_top - 1;
+                
+                // Spherical leaf shape
+                let dx_f = dx as f32;
+                let dz_f = dz as f32;
+                let dy_f = (world_y - leaf_center_y) as f32;
+                
+                let dist_sq = dx_f * dx_f + dy_f * dy_f * 1.5 + dz_f * dz_f;
+                let leaf_radius = 2.5;
+                
+                if dist_sq < leaf_radius * leaf_radius {
+                    // Don't place leaves where trunk is
+                    if !(dx == 0 && dz == 0 && world_y < trunk_top) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    
+    false
+}
+
+// Water level constant - areas below this height will be filled with water
+const WATER_LEVEL: i32 = 18;
+
 fn setup_voxel_world(
     mut world: ResMut<VoxelWorld>,
 ) {
@@ -213,12 +287,35 @@ fn setup_voxel_world(
 
                     // Check for caves
                     if is_cave(world_x, world_y, world_z) && world_y < terrain_height - 3 {
-                        chunk.set(UVec3::new(x as u32, y as u32, z as u32), VoxelType::Air);
+                        // Fill caves below water level with water
+                        let voxel = if world_y <= WATER_LEVEL {
+                            VoxelType::Water
+                        } else {
+                            VoxelType::Air
+                        };
+                        chunk.set(UVec3::new(x as u32, y as u32, z as u32), voxel);
+                        continue;
+                    }
+
+                    // Check for tree trunks
+                    if is_tree_trunk(world_x, world_y, world_z, terrain_height) {
+                        chunk.set(UVec3::new(x as u32, y as u32, z as u32), VoxelType::Wood);
+                        continue;
+                    }
+
+                    // Check for tree leaves
+                    if world_y > terrain_height && is_tree_leaves(world_x, world_y, world_z) {
+                        chunk.set(UVec3::new(x as u32, y as u32, z as u32), VoxelType::Leaves);
                         continue;
                     }
 
                     let voxel = if world_y > terrain_height {
-                        VoxelType::Air
+                        // Above terrain - check if below water level
+                        if world_y <= WATER_LEVEL {
+                            VoxelType::Water
+                        } else {
+                            VoxelType::Air
+                        }
                     } else if world_y == 0 {
                         VoxelType::Bedrock
                     } else if world_y <= 3 {
@@ -231,6 +328,9 @@ fn setup_voxel_world(
                     } else {
                         // Determine block based on depth from surface and biome
                         let depth = terrain_height - world_y;
+
+                        // Near water, use sand instead of topsoil
+                        let near_water = terrain_height <= WATER_LEVEL + 2;
 
                         match biome {
                             1 => {
@@ -266,8 +366,10 @@ fn setup_voxel_world(
                                 }
                             }
                             _ => {
-                                // Normal terrain
-                                if depth == 0 {
+                                // Normal terrain - use sand near water (beaches)
+                                if near_water && depth <= 2 {
+                                    VoxelType::Sand
+                                } else if depth == 0 {
                                     VoxelType::TopSoil
                                 } else if depth <= 4 {
                                     VoxelType::SubSoil
@@ -293,13 +395,14 @@ fn mesh_dirty_chunks_system(
     mut world: ResMut<VoxelWorld>,
     mut meshes: ResMut<Assets<Mesh>>,
     material: Res<VoxelMaterial>,
+    water_material: Res<crate::rendering::materials::WaterMaterial>,
 ) {
     // Collect dirty chunks first to avoid borrowing issues
     let dirty_chunks: Vec<IVec3> = world.dirty_chunks().collect();
     
     for chunk_pos in dirty_chunks {
         // Step 1: Generate mesh data using immutable borrow
-        let mesh_data = if let Some(chunk) = world.get_chunk(chunk_pos) {
+        let mesh_result = if let Some(chunk) = world.get_chunk(chunk_pos) {
             generate_chunk_mesh(chunk, &world)
         } else {
             continue;
@@ -310,29 +413,54 @@ fn mesh_dirty_chunks_system(
             // Clear dirty flag
             chunk.clear_dirty();
             
-            if mesh_data.is_empty() {
+            let world_pos = VoxelWorld::chunk_to_world(chunk_pos);
+            
+            // Handle solid mesh
+            if mesh_result.solid.is_empty() {
                 if let Some(entity) = chunk.mesh_entity() {
                     commands.entity(entity).despawn();
-                    chunk.set_mesh_entity(Entity::PLACEHOLDER); 
+                    chunk.clear_mesh_entity();
                 }
-                continue;
+            } else {
+                let mesh = mesh_result.solid.into_mesh();
+                let mesh_handle = meshes.add(mesh);
+                
+                if let Some(entity) = chunk.mesh_entity() {
+                    commands.entity(entity).insert(Mesh3d(mesh_handle));
+                } else {
+                    let entity = commands.spawn((
+                        Mesh3d(mesh_handle),
+                        MeshMaterial3d(material.handle.clone()),
+                        Transform::from_xyz(world_pos.x as f32, world_pos.y as f32, world_pos.z as f32),
+                        crate::voxel::meshing::ChunkMesh { chunk_position: chunk_pos },
+                    )).id();
+                    chunk.set_mesh_entity(entity);
+                }
             }
             
-            let mesh = mesh_data.into_mesh();
-            let mesh_handle = meshes.add(mesh);
-            
-            if let Some(entity) = chunk.mesh_entity() {
-                commands.entity(entity).insert(Mesh3d(mesh_handle));
+            // Handle water mesh
+            if mesh_result.water.is_empty() {
+                if let Some(entity) = chunk.water_mesh_entity() {
+                    commands.entity(entity).despawn();
+                    chunk.clear_water_mesh_entity();
+                }
             } else {
-                let world_pos = VoxelWorld::chunk_to_world(chunk_pos);
-                let entity = commands.spawn((
-                    Mesh3d(mesh_handle),
-                    MeshMaterial3d(material.handle.clone()),
-                    Transform::from_xyz(world_pos.x as f32, world_pos.y as f32, world_pos.z as f32),
-                    crate::voxel::meshing::ChunkMesh { chunk_position: chunk_pos }, // Added component check
-                )).id();
-                chunk.set_mesh_entity(entity);
+                let mesh = mesh_result.water.into_mesh();
+                let mesh_handle = meshes.add(mesh);
+                
+                if let Some(entity) = chunk.water_mesh_entity() {
+                    commands.entity(entity).insert(Mesh3d(mesh_handle));
+                } else {
+                    let entity = commands.spawn((
+                        Mesh3d(mesh_handle),
+                        MeshMaterial3d(water_material.handle.clone()),
+                        Transform::from_xyz(world_pos.x as f32, world_pos.y as f32, world_pos.z as f32),
+                        crate::voxel::meshing::ChunkMesh { chunk_position: chunk_pos },
+                    )).id();
+                    chunk.set_water_mesh_entity(entity);
+                }
             }
         }
     }
 }
+

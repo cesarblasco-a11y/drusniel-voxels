@@ -6,6 +6,7 @@ pub struct Chunk {
     voxels: [VoxelType; CHUNK_VOLUME],
     dirty: bool,
     mesh_entity: Option<Entity>,
+    water_mesh_entity: Option<Entity>,
     position: IVec3, // Chunk coords (not world)
 }
 
@@ -15,6 +16,7 @@ impl Chunk {
             voxels: [VoxelType::Air; CHUNK_VOLUME],
             dirty: true,
             mesh_entity: None,
+            water_mesh_entity: None,
             position,
         }
     }
@@ -52,6 +54,22 @@ impl Chunk {
         self.mesh_entity
     }
 
+    pub fn set_water_mesh_entity(&mut self, entity: Entity) {
+        self.water_mesh_entity = Some(entity);
+    }
+
+    pub fn water_mesh_entity(&self) -> Option<Entity> {
+        self.water_mesh_entity
+    }
+
+    pub fn clear_mesh_entity(&mut self) {
+        self.mesh_entity = None;
+    }
+
+    pub fn clear_water_mesh_entity(&mut self) {
+        self.water_mesh_entity = None;
+    }
+
     pub fn position(&self) -> IVec3 {
         self.position
     }
@@ -69,3 +87,4 @@ impl Chunk {
         (x, y, z)
     }
 }
+

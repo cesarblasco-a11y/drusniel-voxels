@@ -1,7 +1,8 @@
 use bevy::prelude::*;
 use bevy::input::mouse::MouseMotion;
 use bevy::core_pipeline::tonemapping::Tonemapping;
-use bevy::pbr::DistanceFog;
+use bevy::core_pipeline::bloom::Bloom;
+use bevy::pbr::{DistanceFog, FogFalloff};
 use crate::voxel::world::VoxelWorld;
 use crate::voxel::types::Voxel;
 
@@ -61,15 +62,22 @@ pub fn spawn_camera(mut commands: Commands) {
         Transform::from_xyz(256.0, 50.0, 256.0).looking_at(Vec3::new(200.0, 30.0, 200.0), Vec3::Y),
         PlayerCamera::default(),
         // Tonemapping for better HDR look
-        Tonemapping::TonyMcMapface,
-        // Distance fog for atmospheric depth
-        DistanceFog {
-            color: Color::srgba(0.53, 0.81, 0.92, 1.0), // Match sky color
-            falloff: bevy::pbr::FogFalloff::Linear {
-                start: 150.0,
-                end: 500.0,
-            },
+        Tonemapping::AcesFitted,
+        // Bloom for that dreamy Valheim glow
+        Bloom {
+            intensity: 0.25,
+            low_frequency_boost: 0.6,
+            low_frequency_boost_curvature: 0.5,
+            high_pass_frequency: 0.8,
+            composite_mode: bevy::core_pipeline::bloom::BloomCompositeMode::Additive,
             ..default()
+        },
+        // Atmospheric fog with warm/pink horizon tint
+        DistanceFog {
+            color: Color::srgba(0.7, 0.8, 0.95, 1.0), // Soft blue-gray base
+            directional_light_color: Color::srgba(1.0, 0.85, 0.7, 1.0), // Warm golden sun scatter
+            directional_light_exponent: 20.0,
+            falloff: FogFalloff::ExponentialSquared { density: 0.0015 },
         },
     ));
 }
