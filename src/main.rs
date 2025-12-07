@@ -1,6 +1,4 @@
 use bevy::prelude::*;
-use bevy::pbr::CascadeShadowConfigBuilder;
-use bevy::core_pipeline::tonemapping::Tonemapping;
 use voxel_builder::voxel::plugin::VoxelPlugin;
 use voxel_builder::rendering::plugin::RenderingPlugin;
 use voxel_builder::camera::plugin::CameraPlugin;
@@ -23,6 +21,7 @@ fn main() {
         .insert_resource(AmbientLight {
             color: Color::srgb(0.9, 0.85, 0.75),
             brightness: 600.0,
+            affects_lightmapped_meshes: true,
         })
         .add_systems(Startup, setup_environment)
         .add_systems(Update, animate_sun)
@@ -51,14 +50,6 @@ fn setup_environment(
             ..default()
         },
         Transform::from_translation(Vec3::ZERO).looking_to(sun_direction, Vec3::Y),
-        // Configure cascaded shadow maps for large terrain
-        CascadeShadowConfigBuilder {
-            num_cascades: 4,
-            first_cascade_far_bound: 30.0,
-            maximum_distance: 400.0,
-            ..default()
-        }
-        .build(),
         Sun,
     ));
 

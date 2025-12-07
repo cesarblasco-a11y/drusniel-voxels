@@ -80,7 +80,7 @@ pub fn update_targeted_block(
     world: Res<VoxelWorld>,
     mut targeted: ResMut<TargetedBlock>,
 ) {
-    if let Ok(transform) = camera_query.get_single() {
+    if let Ok(transform) = camera_query.single() {
         let origin = transform.translation;
         let direction = transform.forward().as_vec3();
         
@@ -134,7 +134,7 @@ pub fn place_block_system(
             let place_pos = block_pos + normal;
             
             // Don't place if player is standing there
-            if let Ok(camera_transform) = camera_query.get_single() {
+            if let Ok(camera_transform) = camera_query.single() {
                 let player_pos = camera_transform.translation;
                 let player_block = IVec3::new(
                     player_pos.x.floor() as i32,

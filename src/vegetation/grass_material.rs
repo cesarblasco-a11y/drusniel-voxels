@@ -1,8 +1,9 @@
 use bevy::{
     prelude::*,
-    render::render_resource::{AsBindGroup, ShaderRef, ShaderType},
+    render::render_resource::{AsBindGroup, ShaderType},
     pbr::Material,
 };
+use bevy_shader::ShaderRef;
 
 /// Uniform data for grass material - must match WGSL struct layout
 #[derive(Clone, Copy, ShaderType, Debug)]

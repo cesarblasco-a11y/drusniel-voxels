@@ -268,6 +268,7 @@ fn setup_voxel_world(
         let chunk_world_x = chunk_pos.x * CHUNK_SIZE_I32;
         let chunk_world_z = chunk_pos.z * CHUNK_SIZE_I32;
         let chunk_world_y = chunk_pos.y * CHUNK_SIZE_I32;
+        let mut water_count = 0u32;
 
         for x in 0..CHUNK_SIZE {
             for z in 0..CHUNK_SIZE {
@@ -287,16 +288,20 @@ fn setup_voxel_world(
                     // }
 
                     // Check for caves
-                    if is_cave(world_x, world_y, world_z) && world_y < terrain_height - 3 {
-                        // Fill caves below water level with water
-                        let voxel = if world_y <= WATER_LEVEL {
-                            VoxelType::Water
-                        } else {
-                            VoxelType::Air
-                        };
-                        chunk.set(UVec3::new(x as u32, y as u32, z as u32), voxel);
-                        continue;
-                    }
+                    // Caves disabled for debugging blue holes
+                    // if is_cave(world_x, world_y, world_z) && world_y < terrain_height - 3 {
+                    //     // Fill caves below water level with water
+                    //     let voxel = if world_y <= WATER_LEVEL {
+                    //         VoxelType::Water
+                    //     } else {
+                    //         VoxelType::Air
+                    //     };
+                    //     if voxel == VoxelType::Water {
+                    //         water_count += 1;
+                    //     }
+                    //     chunk.set(UVec3::new(x as u32, y as u32, z as u32), voxel);
+                    //     continue;
+                    // }
 
                     // Check for tree trunks
                     if is_tree_trunk(world_x, world_y, world_z, terrain_height) {
@@ -381,6 +386,9 @@ fn setup_voxel_world(
                         }
                     };
 
+                    if voxel == VoxelType::Water {
+                        water_count += 1;
+                    }
                     chunk.set(UVec3::new(x as u32, y as u32, z as u32), voxel);
                 }
             }
@@ -388,6 +396,10 @@ fn setup_voxel_world(
 
         chunk.mark_dirty();
         world.insert_chunk(chunk);
+
+        if water_count > 0 {
+            info!("Chunk {:?} generated {} water voxels", chunk_pos, water_count);
+        }
     }
 }
 

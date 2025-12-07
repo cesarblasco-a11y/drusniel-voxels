@@ -1,8 +1,8 @@
-use crate::constants::{CHUNK_SIZE, CHUNK_SIZE_I32};
+use crate::constants::CHUNK_SIZE_I32;
 use crate::voxel::chunk::Chunk;
 use crate::voxel::types::VoxelType;
 use bevy::prelude::*;
-use bevy::utils::HashMap;
+use std::collections::HashMap;
 
 #[derive(Resource)]
 pub struct VoxelWorld {

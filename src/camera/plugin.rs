@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy::window::{CursorGrabMode, CursorOptions};
 use crate::camera::controller::{spawn_camera, player_camera_system};
 
 pub struct CameraPlugin;
@@ -11,10 +12,10 @@ impl Plugin for CameraPlugin {
     }
 }
 
-fn lock_cursor_on_start(mut windows: Query<&mut Window>) {
-    if let Ok(mut window) = windows.get_single_mut() {
-        window.cursor_options.visible = false;
-        window.cursor_options.grab_mode = bevy::window::CursorGrabMode::Locked;
+fn lock_cursor_on_start(mut windows: Query<(&mut Window, &mut CursorOptions)>) {
+    if let Ok((_window, mut cursor_options)) = windows.single_mut() {
+        cursor_options.visible = false;
+        cursor_options.grab_mode = CursorGrabMode::Locked;
     }
 }
 

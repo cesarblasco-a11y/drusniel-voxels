@@ -32,7 +32,7 @@ pub fn spawn_pickaxe(
     mut materials: ResMut<Assets<StandardMaterial>>,
     camera_query: Query<Entity, With<crate::camera::controller::PlayerCamera>>,
 ) {
-    if let Ok(camera_entity) = camera_query.get_single() {
+    if let Ok(camera_entity) = camera_query.single() {
         // Create a larger, more visible pickaxe
         
         // Handle (long thin box) - much larger

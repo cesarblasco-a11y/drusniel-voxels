@@ -1,8 +1,8 @@
 use bevy::prelude::*;
 use bevy::input::mouse::MouseMotion;
 use bevy::core_pipeline::tonemapping::Tonemapping;
-use bevy::core_pipeline::bloom::Bloom;
 use bevy::pbr::{DistanceFog, FogFalloff};
+use bevy::window::{CursorGrabMode, CursorOptions};
 use crate::voxel::world::VoxelWorld;
 use crate::voxel::types::Voxel;
 
@@ -63,15 +63,6 @@ pub fn spawn_camera(mut commands: Commands) {
         PlayerCamera::default(),
         // Tonemapping for better HDR look
         Tonemapping::AcesFitted,
-        // Bloom for that dreamy Valheim glow
-        Bloom {
-            intensity: 0.25,
-            low_frequency_boost: 0.6,
-            low_frequency_boost_curvature: 0.5,
-            high_pass_frequency: 0.8,
-            composite_mode: bevy::core_pipeline::bloom::BloomCompositeMode::Additive,
-            ..default()
-        },
         // Atmospheric fog with warm/pink horizon tint
         DistanceFog {
             color: Color::srgba(0.7, 0.8, 0.95, 1.0), // Soft blue-gray base
@@ -87,19 +78,21 @@ pub fn player_camera_system(
     keys: Res<ButtonInput<KeyCode>>,
     mut mouse_motion: EventReader<MouseMotion>,
     time: Res<Time>,
-    mut windows: Query<&mut Window>,
+    mut windows: Query<(&mut Window, &mut CursorOptions)>,
     world: Res<VoxelWorld>,
 ) {
-    let mut window = windows.single_mut();
+    let Ok((_window, mut cursor_options)) = windows.single_mut() else {
+        return;
+    };
     let dt = time.delta_secs();
 
     // Toggle cursor lock with Escape
     if keys.just_pressed(KeyCode::Escape) {
-        window.cursor_options.visible = !window.cursor_options.visible;
-        window.cursor_options.grab_mode = if window.cursor_options.visible {
-            bevy::window::CursorGrabMode::None
+        cursor_options.visible = !cursor_options.visible;
+        cursor_options.grab_mode = if cursor_options.visible {
+            CursorGrabMode::None
         } else {
-            bevy::window::CursorGrabMode::Locked
+            CursorGrabMode::Locked
         };
     }
 
@@ -127,7 +120,7 @@ pub fn player_camera_system(
                 .looking_at(Vec3::new(200.0, 30.0, 200.0), Vec3::Y);
         }
 
-        if window.cursor_options.visible {
+        if cursor_options.visible {
             return;
         }
 

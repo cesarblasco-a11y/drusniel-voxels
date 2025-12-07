@@ -1,9 +1,16 @@
+use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
-use bevy::render::mesh::{Indices, PrimitiveTopology};
+use bevy_mesh::{Indices, PrimitiveTopology};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::constants::VOXEL_SIZE;
 use crate::voxel::chunk::Chunk;
 use crate::voxel::types::{VoxelType, Voxel};
 use crate::voxel::world::VoxelWorld;
+
+// Debug helper: log if a solid face ends up using the water atlas tile
+const DEBUG_LOG_WATER_TILE_ON_SOLIDS: bool = true;
+const DEBUG_MAX_LOGS: usize = 64;
+static DEBUG_WATER_SOLID_LOGS: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Component)]
 pub struct ChunkMesh {
@@ -44,7 +51,7 @@ impl MeshData {
     }
 
     pub fn into_mesh(self) -> Mesh {
-        let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, bevy::render::render_asset::RenderAssetUsages::default());
+        let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, self.positions);
         mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, self.normals);
         mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, self.uvs);
@@ -78,13 +85,8 @@ pub fn generate_chunk_mesh(
                 }
 
                 if voxel.is_liquid() {
-                    // Water blocks - only render faces adjacent to air
-                    check_water_face(chunk, world, local, Face::Top, &mut water_mesh, voxel);
-                    check_water_face(chunk, world, local, Face::Bottom, &mut water_mesh, voxel);
-                    check_water_face(chunk, world, local, Face::North, &mut water_mesh, voxel);
-                    check_water_face(chunk, world, local, Face::South, &mut water_mesh, voxel);
-                    check_water_face(chunk, world, local, Face::East, &mut water_mesh, voxel);
-                    check_water_face(chunk, world, local, Face::West, &mut water_mesh, voxel);
+                    // Skip water rendering entirely for debugging
+                    continue;
                 } else if voxel.is_solid() {
                     // Solid blocks - render faces adjacent to air or water (transparent)
                     check_face(chunk, world, local, Face::Top, &mut solid_mesh, voxel);
@@ -393,6 +395,18 @@ fn add_face_with_ao(
     
     // Face-specific texture
     let atlas_idx = get_face_atlas_index(voxel, face);
+
+    if DEBUG_LOG_WATER_TILE_ON_SOLIDS && atlas_idx == VoxelType::Water.atlas_index() {
+        let count = DEBUG_WATER_SOLID_LOGS.fetch_add(1, Ordering::Relaxed);
+        if count < DEBUG_MAX_LOGS {
+            let chunk_origin = VoxelWorld::chunk_to_world(chunk.position());
+            let world_pos = chunk_origin + IVec3::new(local.x as i32, local.y as i32, local.z as i32);
+            info!(
+                "Solid face using water tile at {:?}, voxel {:?}, face {:?}",
+                world_pos, voxel, face
+            );
+        }
+    }
     let cols = 4.0;
     let rows = 4.0;
     let col = (atlas_idx % 4) as f32;

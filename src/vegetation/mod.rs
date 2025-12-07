@@ -1,7 +1,8 @@
 pub mod grass_material;
 
+use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
-use bevy::pbr::NotShadowCaster;
+use bevy_mesh::{Indices, PrimitiveTopology};
 use crate::voxel::world::VoxelWorld;
 use crate::voxel::types::{VoxelType, Voxel};
 use crate::camera::controller::PlayerCamera;
@@ -155,7 +156,6 @@ pub fn spawn_grass_blades(
                                                         .with_rotation(Quat::from_rotation_y(rotation))
                                                         .with_scale(Vec3::splat(scale)),
                                                         GrassBlade,
-                                                        NotShadowCaster,
                                                     ));
                                                     grass_count += 1;
                                                 }
@@ -176,8 +176,6 @@ pub fn spawn_grass_blades(
 
 /// Create a grass blade mesh (crossed quads) - taller for Valheim look
 fn create_grass_blade_mesh() -> Mesh {
-    use bevy::render::mesh::{Indices, PrimitiveTopology};
-
     let height = 1.4; // Taller grass like Valheim
     let width = 0.18;
 
@@ -220,7 +218,7 @@ fn create_grass_blade_mesh() -> Mesh {
         4, 6, 5, 4, 7, 6, // Quad 2 back
     ];
 
-    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, bevy::render::render_asset::RenderAssetUsages::default());
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
@@ -338,7 +336,7 @@ pub fn spawn_floating_particles(
         return;
     }
 
-    let Ok(camera_transform) = camera_query.get_single() else {
+    let Ok(camera_transform) = camera_query.single() else {
         return;
     };
 
@@ -409,7 +407,6 @@ pub fn spawn_floating_particles(
                     (hash2 - 0.5) * 2.0,
                 ),
             },
-            NotShadowCaster,
         ));
     }
 
@@ -422,7 +419,7 @@ pub fn animate_particles(
     camera_query: Query<&Transform, With<PlayerCamera>>,
     mut particles: Query<(&mut Transform, &FloatingParticle), Without<PlayerCamera>>,
 ) {
-    let Ok(camera_transform) = camera_query.get_single() else {
+    let Ok(camera_transform) = camera_query.single() else {
         return;
     };
 
@@ -473,11 +470,14 @@ impl Plugin for VegetationPlugin {
             .init_resource::<RocksSpawned>()
             .init_resource::<ParticlesSpawned>()
             // Run in Update to ensure world is populated
-            .add_systems(Update, (
-                spawn_grass_blades,
-                spawn_rock_props,
-                spawn_floating_particles,
-                animate_particles,
-            ));
+            .add_systems(
+                Update,
+                (
+                    spawn_grass_blades,
+                    spawn_rock_props,
+                    spawn_floating_particles,
+                    animate_particles,
+                ),
+            );
     }
 }
