@@ -201,12 +201,91 @@ pub fn render_block_highlight(
     if let Some(pos) = targeted.position {
         let center = Vec3::new(pos.x as f32 + 0.5, pos.y as f32 + 0.5, pos.z as f32 + 0.5);
         let half_size = Vec3::splat(0.505); // Slightly larger than block
-        
+
         // Draw wireframe cube
         gizmos.cuboid(
             Transform::from_translation(center).with_scale(half_size * 2.0),
             Color::srgba(1.0, 1.0, 1.0, 0.8),
         );
+    }
+}
+
+/// System to debug voxel info when D is pressed
+pub fn debug_voxel_info_system(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    targeted: Res<TargetedBlock>,
+    world: Res<VoxelWorld>,
+    camera_query: Query<&Transform, With<crate::camera::controller::PlayerCamera>>,
+) {
+    if keyboard.just_pressed(KeyCode::KeyD) {
+        info!("=== DEBUG VOXEL INFO ===");
+
+        // Camera position
+        if let Ok(camera) = camera_query.single() {
+            let pos = camera.translation;
+            info!("Camera pos: ({:.1}, {:.1}, {:.1})", pos.x, pos.y, pos.z);
+
+            let block_pos = IVec3::new(
+                pos.x.floor() as i32,
+                pos.y.floor() as i32,
+                pos.z.floor() as i32,
+            );
+            let chunk_pos = VoxelWorld::world_to_chunk(block_pos);
+            info!("Camera chunk: {:?}", chunk_pos);
+        }
+
+        // Targeted block info
+        if let (Some(pos), Some(voxel_type)) = (targeted.position, targeted.voxel_type) {
+            let chunk_pos = VoxelWorld::world_to_chunk(pos);
+            let local_pos = VoxelWorld::world_to_local(pos);
+
+            info!("Targeted block:");
+            info!("  World pos: {:?}", pos);
+            info!("  Chunk pos: {:?}", chunk_pos);
+            info!("  Local pos: {:?}", local_pos);
+            info!("  Voxel type: {:?}", voxel_type);
+            info!("  Atlas index: {}", voxel_type.atlas_index());
+            info!("  Is solid: {}", voxel_type.is_solid());
+            info!("  Is transparent: {}", voxel_type.is_transparent());
+
+            // Check neighbors
+            info!("  Neighbors:");
+            let neighbors = [
+                ("Top   (+Y)", IVec3::new(0, 1, 0)),
+                ("Bottom(-Y)", IVec3::new(0, -1, 0)),
+                ("North (+Z)", IVec3::new(0, 0, 1)),
+                ("South (-Z)", IVec3::new(0, 0, -1)),
+                ("East  (+X)", IVec3::new(1, 0, 0)),
+                ("West  (-X)", IVec3::new(-1, 0, 0)),
+            ];
+
+            for (name, offset) in neighbors {
+                let neighbor_pos = pos + offset;
+                let neighbor_chunk = VoxelWorld::world_to_chunk(neighbor_pos);
+
+                match world.get_voxel(neighbor_pos) {
+                    Some(n_type) => {
+                        let same_chunk = neighbor_chunk == chunk_pos;
+                        info!("    {}: {:?} (atlas:{}) chunk:{:?} same_chunk:{}",
+                            name, n_type, n_type.atlas_index(), neighbor_chunk, same_chunk);
+                    }
+                    None => {
+                        info!("    {}: NONE (outside world) chunk:{:?}", name, neighbor_chunk);
+                    }
+                }
+            }
+
+            // Check if chunk exists
+            if world.get_chunk(chunk_pos).is_some() {
+                info!("  Chunk exists: YES");
+            } else {
+                info!("  Chunk exists: NO!");
+            }
+        } else {
+            info!("No block targeted");
+        }
+
+        info!("========================");
     }
 }
 
@@ -223,6 +302,7 @@ impl Plugin for InteractionPlugin {
                 break_block_system,
                 place_block_system,
                 render_block_highlight,
+                debug_voxel_info_system,
             ).chain());
     }
 }

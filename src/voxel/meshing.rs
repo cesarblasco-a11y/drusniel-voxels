@@ -85,7 +85,7 @@ pub fn generate_chunk_mesh(
                 }
 
                 if voxel.is_liquid() {
-                    // Skip water rendering entirely for debugging
+                    // Water generation disabled for debugging gaps
                     continue;
                 } else if voxel.is_solid() {
                     // Solid blocks - render faces adjacent to air or water (transparent)
@@ -169,8 +169,8 @@ fn is_face_visible(
     if let Some(neighbor_voxel) = world.get_voxel(neighbor_world_pos) {
         neighbor_voxel.is_transparent()
     } else {
-        // If outside world bounds, assume visible
-        true
+        // Outside world bounds - never render faces into the void
+        false
     }
 }
 
@@ -413,7 +413,7 @@ fn add_face_with_ao(
     let row = (atlas_idx / 4) as f32;
     
     // UV padding to prevent texture bleeding from adjacent tiles
-    let padding = 0.01;
+    let padding = 0.001;
     
     let u_min = col / cols + padding;
     let u_max = (col + 1.0) / cols - padding;
@@ -438,13 +438,15 @@ fn add_face_with_ao(
         mesh_data.indices.push(start_idx + 2);
     } else {
         // Flipped diagonal for better AO interpolation
+        // Triangle 1: v1, v0, v3 (CCW)
         mesh_data.indices.push(start_idx + 1);
-        mesh_data.indices.push(start_idx + 3);
         mesh_data.indices.push(start_idx);
-        
-        mesh_data.indices.push(start_idx + 1);
-        mesh_data.indices.push(start_idx + 2);
         mesh_data.indices.push(start_idx + 3);
+        
+        // Triangle 2: v1, v3, v2 (CCW)
+        mesh_data.indices.push(start_idx + 1);
+        mesh_data.indices.push(start_idx + 3);
+        mesh_data.indices.push(start_idx + 2);
     }
 }
 
@@ -511,7 +513,7 @@ fn add_face_no_ao(
     let row = (atlas_idx / 4) as f32;
     
     // UV padding to prevent texture bleeding from adjacent tiles
-    let padding = 0.01;
+    let padding = 0.001;
     
     let u_min = col / cols + padding;
     let u_max = (col + 1.0) / cols - padding;

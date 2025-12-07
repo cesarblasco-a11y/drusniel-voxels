@@ -22,6 +22,8 @@ pub fn setup_voxel_material(
         perceptual_roughness: 0.9,
         metallic: 0.0,
         reflectance: 0.1,
+        // Disable backface culling to visualize all faces while we debug missing quads
+        cull_mode: None,
         // Use a mask so leaves/foliage can leverage alpha but keep opaque blocks solid
         alpha_mode: AlphaMode::Mask(0.5),
         ..default()

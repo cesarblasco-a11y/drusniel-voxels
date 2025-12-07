@@ -188,10 +188,10 @@ fn should_spawn_tree(world_x: i32, world_z: i32, terrain_height: i32) -> bool {
     if terrain_height <= WATER_LEVEL + 2 {
         return false;
     }
-    
+
     // Use hash to determine tree placement - sparse distribution
     let tree_noise = hash(world_x.wrapping_mul(7), world_z.wrapping_mul(13));
-    
+
     // About 2% chance per block
     tree_noise > 0.98
 }
@@ -253,9 +253,11 @@ fn is_tree_leaves(world_x: i32, world_y: i32, world_z: i32) -> bool {
     false
 }
 
-// Water level constant - areas below this height will be filled with water
-// Set to 0 to effectively disable water (terrain starts at ~15+)
-const WATER_LEVEL: i32 = 0;
+// Water level constant - areas below this height will be filled with water (keep low for now)
+const WATER_LEVEL: i32 = 10;
+
+// Debug flat world toggle (disabled by default)
+const DEBUG_FLAT_WORLD: bool = false;
 
 fn setup_voxel_world(
     mut world: ResMut<VoxelWorld>,
@@ -315,13 +317,10 @@ fn setup_voxel_world(
                         continue;
                     }
 
-                    let voxel = if world_y > terrain_height {
-                        // Above terrain - check if below water level
-                        if world_y <= WATER_LEVEL {
-                            VoxelType::Water
-                        } else {
-                            VoxelType::Air
-                        }
+                    let voxel = if DEBUG_FLAT_WORLD {
+                        if world_y <= 12 { VoxelType::TopSoil } else { VoxelType::Air }
+                    } else if world_y > terrain_height {
+                        VoxelType::Air
                     } else if world_y == 0 {
                         VoxelType::Bedrock
                     } else if world_y <= 3 {
@@ -452,7 +451,7 @@ fn mesh_dirty_chunks_system(
             }
             
             // Handle water mesh - DISABLED FOR DEBUGGING
-            // Skip water mesh creation entirely
+            // Skip water mesh entirely - just despawn any existing
             if let Some(entity) = chunk.water_mesh_entity() {
                 commands.entity(entity).despawn();
                 chunk.clear_water_mesh_entity();

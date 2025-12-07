@@ -81,65 +81,7 @@ fn setup_environment(
         SunVisual,
     ));
 
-    // Distant fog effect - warm horizon haze (Valheim style)
-    let haze_material = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.85, 0.75, 0.9, 0.35), // Warm pink/purple haze
-        alpha_mode: AlphaMode::Blend,
-        unlit: true,
-        cull_mode: None,
-        ..default()
-    });
-
-    // Horizon haze ring
-    for i in 0..8 {
-        let angle = (i as f32) * std::f32::consts::PI * 0.25;
-        let distance = 450.0;
-        let x = 256.0 + angle.cos() * distance;
-        let z = 256.0 + angle.sin() * distance;
-
-        commands.spawn((
-            Mesh3d(meshes.add(Plane3d::new(Vec3::new(-angle.cos(), 0.0, -angle.sin()), Vec2::new(100.0, 80.0)))),
-            MeshMaterial3d(haze_material.clone()),
-            Transform::from_xyz(x, 30.0, z),
-        ));
-    }
-
-    // Cloud layer (simple scattered cloud planes)
-    let cloud_material = materials.add(StandardMaterial {
-        base_color: Color::srgba(1.0, 1.0, 1.0, 0.6),
-        alpha_mode: AlphaMode::Blend,
-        unlit: true,
-        cull_mode: None,
-        ..default()
-    });
-
-    // Spawn some clouds
-    let cloud_positions = [
-        (100.0, 120.0, 150.0, 40.0),
-        (200.0, 130.0, 100.0, 55.0),
-        (350.0, 115.0, 200.0, 45.0),
-        (150.0, 125.0, 350.0, 50.0),
-        (400.0, 135.0, 400.0, 60.0),
-        (50.0, 110.0, 300.0, 35.0),
-        (300.0, 140.0, 50.0, 48.0),
-        (250.0, 118.0, 280.0, 42.0),
-        (180.0, 128.0, 420.0, 52.0),
-        (420.0, 122.0, 180.0, 38.0),
-    ];
-
-    for (x, y, z, size) in cloud_positions {
-        commands.spawn((
-            Mesh3d(meshes.add(Plane3d::new(Vec3::Y, Vec2::splat(size)))),
-            MeshMaterial3d(cloud_material.clone()),
-            Transform::from_xyz(x, y, z),
-        ));
-        // Second layer for depth
-        commands.spawn((
-            Mesh3d(meshes.add(Plane3d::new(Vec3::Y, Vec2::splat(size * 0.7)))),
-            MeshMaterial3d(cloud_material.clone()),
-            Transform::from_xyz(x + 5.0, y - 3.0, z + 5.0),
-        ));
-    }
+    // Horizon haze and clouds disabled for debugging
 }
 
 // Animate sun position for day/night cycle (slow)
