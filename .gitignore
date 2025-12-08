@@ -5,3 +5,6 @@ log.err
 .claude/
 .history/
 
+src/*.html
+tools/*.html
+assets/*.html
