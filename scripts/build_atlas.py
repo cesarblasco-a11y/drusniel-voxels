@@ -43,7 +43,7 @@ TEXTURE_MAPPINGS = [
     # Index 3: Bedrock
     (3, ["Bedrock Texture", "bedrock"]),
     # Index 4: Sand
-    (4, ["Sand Texture", "sand"]),
+    (4, ["coast_sand", "Sand Texture", "sand"]),
     # Index 5: Clay
     (5, ["Terracotta Clay Texture", "clay"]),
     # Index 6: Water
@@ -63,12 +63,26 @@ TEXTURE_MAPPINGS = [
 
 def find_texture_file(patterns: list[str]) -> Path | None:
     """Find a texture file matching any of the given patterns."""
+    # First check main directory
     for file in TEXTURES_DIR.iterdir():
         if file.suffix.lower() in ['.png', '.jpg', '.jpeg']:
             filename_lower = file.stem.lower()
             for pattern in patterns:
                 if pattern.lower() in filename_lower:
                     return file
+
+    # Then check subdirectories for diffuse/color textures
+    for subdir in TEXTURES_DIR.iterdir():
+        if subdir.is_dir():
+            subdir_name = subdir.name.lower()
+            for pattern in patterns:
+                if pattern.lower() in subdir_name:
+                    # Look for diffuse texture in subfolder
+                    for name in ['diff.jpg', 'diff.png', 'diffuse.jpg', 'diffuse.png',
+                                 'color.jpg', 'color.png', 'base_color.jpg', 'base_color.png']:
+                        texture_path = subdir / name
+                        if texture_path.exists():
+                            return texture_path
     return None
 
 
