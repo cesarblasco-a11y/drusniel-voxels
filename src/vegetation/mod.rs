@@ -57,6 +57,7 @@ pub fn setup_grass_patch_assets(
     mut material_handles: ResMut<GrassMaterialHandles>,
 ) {
     let blade = meshes.add(create_grass_blade_mesh());
+    info!("Created grass blade template mesh");
 
     // Create grass materials with different color variations
     let grass_material_configs = vec![
@@ -83,11 +84,13 @@ pub fn setup_grass_patch_assets(
         .collect();
 
     material_handles.handles = material_handles_vec.clone();
+    info!("Created {} grass material variations", material_handles_vec.len());
 
     commands.insert_resource(GrassPatchAssets {
         blade_mesh: blade,
         materials: material_handles_vec,
     });
+    info!("GrassPatchAssets resource initialized");
 }
 
 /// Spawn a procedural grass patch for each solid voxel chunk mesh
@@ -110,11 +113,12 @@ pub fn attach_procedural_grass_to_chunks(
             continue;
         }
 
-        let Some(chunk_source_mesh) = meshes.get(chunk_mesh) else {
+        let Some(chunk_source_mesh) = meshes.get(&chunk_mesh.0) else {
             continue;
         };
 
-        let instances = collect_grass_instances(chunk_source_mesh, transform, 10, 900);
+        // Density: blades per square unit; max_count: limit per chunk
+        let instances = collect_grass_instances(chunk_source_mesh, transform, 20, 2000);
         if instances.is_empty() {
             continue;
         }
@@ -147,6 +151,7 @@ pub fn attach_procedural_grass_to_chunks(
             GlobalTransform::IDENTITY,
             Visibility::Visible,
             InheritedVisibility::VISIBLE,
+            ViewVisibility::default(),
         ));
     }
 }
@@ -160,16 +165,33 @@ fn collect_grass_instances(
 ) -> Vec<GrassInstance> {
     let positions = match mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
         Some(VertexAttributeValues::Float32x3(values)) => values,
-        _ => return Vec::new(),
+        _ => {
+            warn!("Mesh has no POSITION attribute");
+            return Vec::new();
+        }
+    };
+
+    let normals = match mesh.attribute(Mesh::ATTRIBUTE_NORMAL) {
+        Some(VertexAttributeValues::Float32x3(values)) => values,
+        _ => {
+            warn!("Mesh has no NORMAL attribute");
+            return Vec::new();
+        }
     };
 
     let indices: Vec<u32> = match mesh.indices() {
         Some(Indices::U32(idx)) => idx.clone(),
         Some(Indices::U16(idx)) => idx.iter().map(|i| *i as u32).collect(),
-        _ => return Vec::new(),
+        _ => {
+            warn!("Mesh has no indices");
+            return Vec::new();
+        }
     };
 
     let mut instances = Vec::new();
+    let mut rejected_area = 0;
+    let mut rejected_normal = 0;
+    let mut accepted = 0;
 
     for tri in indices.chunks(3) {
         if tri.len() < 3 {
@@ -180,16 +202,25 @@ fn collect_grass_instances(
         let v1 = transform.transform_point(Vec3::from(positions[tri[1] as usize]));
         let v2 = transform.transform_point(Vec3::from(positions[tri[2] as usize]));
 
+        // Use the stored normal from the first vertex of the triangle (all 3 should be the same for flat faces)
+        let normal_local = Vec3::from(normals[tri[0] as usize]);
+        let normal_world = transform.rotation * normal_local; // Transform rotation only, not translation
+
         let normal = (v1 - v0).cross(v2 - v0);
         let area = normal.length() * 0.5;
         if area <= 0.0001 {
+            rejected_area += 1;
             continue;
         }
 
-        let normal_dir = normal.normalize();
+        let normal_dir = normal_world.normalize();
+        
         if normal_dir.y <= 0.25 {
+            rejected_normal += 1;
             continue;
         }
+        
+        accepted += 1;
 
         let blade_count = (density as f32 * area).ceil() as u32;
         let seed_x = (v0.x + v1.x + v2.x) as i32;
