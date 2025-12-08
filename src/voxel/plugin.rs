@@ -82,12 +82,12 @@ fn get_terrain_height(world_x: i32, world_z: i32) -> i32 {
     let x = world_x as f32;
     let z = world_z as f32;
 
-    // Base terrain with multiple noise layers - lowered to create more water/beaches
-    // Base now ranges from 10-30 instead of 15-40
-    let base = fbm(x * 0.008, z * 0.008, 4) * 20.0 + 10.0;
+    // Base terrain with multiple noise layers
+    // Base ranges from 16-36, keeping most land above water level (18)
+    let base = fbm(x * 0.008, z * 0.008, 4) * 20.0 + 16.0;
 
-    // Hills - larger features (reduced)
-    let hills = fbm(x * 0.02, z * 0.02, 3) * 8.0;
+    // Hills - larger features
+    let hills = fbm(x * 0.02, z * 0.02, 3) * 10.0;
 
     // Mountains - occasional tall peaks
     let mountain_mask = fbm(x * 0.005, z * 0.005, 2);
