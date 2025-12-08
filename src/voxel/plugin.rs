@@ -399,8 +399,8 @@ fn setup_voxel_world(
                         let depth = terrain_height - world_y;
 
                         // Near water, use sand instead of topsoil (beaches and shorelines)
-                        // Expand beach area: any terrain within 6 blocks above water level
-                        let near_water = terrain_height <= WATER_LEVEL + 6;
+                        // Beach area: terrain within 2 blocks above water level only
+                        let near_water = terrain_height <= WATER_LEVEL + 2;
 
                         match biome {
                             1 => {
@@ -437,11 +437,10 @@ fn setup_voxel_world(
                             }
                             _ => {
                                 // Normal terrain - use sand near water (beaches)
-                                // Make beaches wider and deeper
                                 if near_water {
-                                    if depth <= 5 {
+                                    if depth <= 2 {
                                         VoxelType::Sand
-                                    } else if depth <= 8 {
+                                    } else if depth <= 5 {
                                         VoxelType::SubSoil
                                     } else {
                                         VoxelType::Rock
