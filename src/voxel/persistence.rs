@@ -78,7 +78,7 @@ pub struct WorldPersistence {
 impl Default for WorldPersistence {
     fn default() -> Self {
         Self {
-            force_regenerate: false,
+            force_regenerate: true, // Force regeneration to ensure fresh terrain
             auto_save: true,
         }
     }
