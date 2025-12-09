@@ -6,6 +6,7 @@ use voxel_builder::rendering::plugin::RenderingPlugin;
 use voxel_builder::vegetation::VegetationPlugin;
 use voxel_builder::viewmodel::PickaxePlugin;
 use voxel_builder::voxel::plugin::VoxelPlugin;
+use voxel_builder::entity::EntityPlugin;
 
 fn main() {
     App::new()
@@ -17,5 +18,6 @@ fn main() {
         .add_plugins(PickaxePlugin)
         .add_plugins(VegetationPlugin)
         .add_plugins(AtmospherePlugin)
+        .add_plugins(EntityPlugin)
         .run();
 }

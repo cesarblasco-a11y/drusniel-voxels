@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use crate::voxel::world::VoxelWorld;
 use crate::voxel::types::{VoxelType, Voxel};
+use crate::entity::{Health, Wolf};
 
 /// Component to mark the block highlight entity
 #[derive(Component)]
@@ -12,6 +13,13 @@ pub struct TargetedBlock {
     pub position: Option<IVec3>,
     pub normal: Option<IVec3>,
     pub voxel_type: Option<VoxelType>,
+}
+
+/// Resource tracking the currently targeted entity
+#[derive(Resource, Default)]
+pub struct TargetedEntity {
+    pub entity: Option<Entity>,
+    pub distance: f32,
 }
 
 /// Resource for the player's held block type
@@ -96,15 +104,74 @@ pub fn update_targeted_block(
     }
 }
 
+/// System to update the targeted entity based on camera look direction
+pub fn update_targeted_entity(
+    camera_query: Query<&Transform, With<crate::camera::controller::PlayerCamera>>,
+    entity_query: Query<(Entity, &Transform), With<Wolf>>,
+    mut targeted: ResMut<TargetedEntity>,
+) {
+    targeted.entity = None;
+    targeted.distance = f32::MAX;
+
+    if let Ok(camera_transform) = camera_query.single() {
+        let origin = camera_transform.translation;
+        let direction = camera_transform.forward().as_vec3();
+
+        // Check all entities for intersection
+        for (entity, entity_transform) in entity_query.iter() {
+            let to_entity = entity_transform.translation - origin;
+            let distance = to_entity.length();
+
+            // Skip if too far
+            if distance > INTERACTION_RANGE {
+                continue;
+            }
+
+            // Check if entity is in front of camera
+            let dot = to_entity.normalize().dot(direction);
+            if dot < 0.9 { // ~25 degree cone
+                continue;
+            }
+
+            // Simple sphere collision (1.5 unit radius for wolf)
+            let closest_point = origin + direction * dot * distance;
+            let dist_to_ray = (entity_transform.translation - closest_point).length();
+
+            if dist_to_ray < 1.5 && distance < targeted.distance {
+                targeted.entity = Some(entity);
+                targeted.distance = distance;
+            }
+        }
+    }
+}
+
+/// System to handle attacking entities (left click)
+pub fn attack_entity_system(
+    mouse: Res<ButtonInput<MouseButton>>,
+    targeted_entity: Res<TargetedEntity>,
+    mut entity_query: Query<&mut Health>,
+) {
+    if mouse.just_pressed(MouseButton::Left) {
+        if let Some(entity) = targeted_entity.entity {
+            if let Ok(mut health) = entity_query.get_mut(entity) {
+                health.damage(10.0);
+                info!("Attacked entity! Health: {}/{}", health.current, health.max);
+            }
+        }
+    }
+}
+
 /// System to handle block breaking (left click)
 pub fn break_block_system(
     mouse: Res<ButtonInput<MouseButton>>,
-    targeted: Res<TargetedBlock>,
+    targeted_block: Res<TargetedBlock>,
+    targeted_entity: Res<TargetedEntity>,
     mut world: ResMut<VoxelWorld>,
     mut held: ResMut<HeldBlock>,
 ) {
-    if mouse.just_pressed(MouseButton::Left) {
-        if let (Some(pos), Some(voxel_type)) = (targeted.position, targeted.voxel_type) {
+    // Only break blocks if not targeting an entity
+    if mouse.just_pressed(MouseButton::Left) && targeted_entity.entity.is_none() {
+        if let (Some(pos), Some(voxel_type)) = (targeted_block.position, targeted_block.voxel_type) {
             // Don't break bedrock
             if voxel_type != VoxelType::Bedrock {
                 // Store the broken block type for placing
@@ -323,9 +390,12 @@ impl Plugin for InteractionPlugin {
     fn build(&self, app: &mut App) {
         app
             .init_resource::<TargetedBlock>()
+            .init_resource::<TargetedEntity>()
             .init_resource::<HeldBlock>()
             .add_systems(Update, (
                 update_targeted_block,
+                update_targeted_entity,
+                attack_entity_system,
                 break_block_system,
                 place_block_system,
                 render_block_highlight,

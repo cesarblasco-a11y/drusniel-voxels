@@ -7,6 +7,7 @@ pub mod interaction;
 pub mod viewmodel;
 pub mod vegetation;
 pub mod environment;
+pub mod entity;
 
 
 
