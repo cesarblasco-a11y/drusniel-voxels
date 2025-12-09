@@ -8,7 +8,10 @@
       "Bash(cargo run:*)",
       "Bash(taskkill:*)",
       "Bash(git commit:*)",
-      "Bash(powershell -Command:*)"
+      "Bash(powershell -Command:*)",
+      "Bash(cargo build:*)",
+      "Bash(python scripts/build_atlas.py:*)",
+      "Bash(del /F world_data.bin)"
     ],
     "deny": [],
     "ask": []
