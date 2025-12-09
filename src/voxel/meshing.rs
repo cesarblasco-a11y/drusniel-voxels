@@ -7,6 +7,10 @@ use crate::voxel::chunk::Chunk;
 use crate::voxel::types::{VoxelType, Voxel};
 use crate::voxel::world::VoxelWorld;
 
+// Surface nets imports for smooth meshing
+use fast_surface_nets::{surface_nets, SurfaceNetsBuffer};
+use ndshape::{ConstShape, ConstShape3u32};
+
 // Debug helper: log if a solid face ends up using the water atlas tile
 const DEBUG_LOG_WATER_TILE_ON_SOLIDS: bool = true;
 const DEBUG_MAX_LOGS: usize = 64;
@@ -337,6 +341,28 @@ fn get_face_atlas_index(voxel: VoxelType, face: Face) -> u8 {
     }
 }
 
+/// Get UV rotation (0-3) based on world position to break up tiling patterns
+/// Returns rotation: 0=0°, 1=90°, 2=180°, 3=270°
+fn get_uv_rotation(world_x: i32, world_y: i32, world_z: i32) -> u8 {
+    // Use a simple hash of position to get pseudo-random rotation
+    let hash = world_x.wrapping_mul(73856093)
+        ^ world_y.wrapping_mul(19349663)
+        ^ world_z.wrapping_mul(83492791);
+    (hash as u8) & 3 // Returns 0, 1, 2, or 3
+}
+
+/// Apply UV rotation to break up tiling patterns
+/// rotation: 0=0°, 1=90°, 2=180°, 3=270°
+fn rotate_uvs(uvs: [[f32; 2]; 4], rotation: u8) -> [[f32; 2]; 4] {
+    match rotation {
+        0 => uvs,                                    // No rotation
+        1 => [uvs[3], uvs[0], uvs[1], uvs[2]],      // 90° CW
+        2 => [uvs[2], uvs[3], uvs[0], uvs[1]],      // 180°
+        3 => [uvs[1], uvs[2], uvs[3], uvs[0]],      // 270° CW
+        _ => uvs,
+    }
+}
+
 fn add_face_with_ao(
     mesh_data: &mut MeshData,
     chunk: &Chunk,
@@ -533,9 +559,311 @@ fn add_face_no_ao(
     mesh_data.indices.push(start_idx);
     mesh_data.indices.push(start_idx + 2);
     mesh_data.indices.push(start_idx + 1);
-    
+
     mesh_data.indices.push(start_idx);
     mesh_data.indices.push(start_idx + 3);
     mesh_data.indices.push(start_idx + 2);
+}
+
+// =============================================================================
+// Surface Nets Smooth Meshing
+// =============================================================================
+
+/// Padded chunk shape for surface nets (18x18x18 for 16x16x16 chunk + 1 padding)
+type PaddedChunkShape = ConstShape3u32<18, 18, 18>;
+
+/// Sample voxel from world or chunk, returns true if solid
+fn sample_voxel_solid(chunk: &Chunk, world: &VoxelWorld, chunk_origin: IVec3, px: u32, py: u32, pz: u32) -> bool {
+    let world_pos = chunk_origin + IVec3::new(px as i32 - 1, py as i32 - 1, pz as i32 - 1);
+
+    let voxel = if px >= 1 && px <= 16 && py >= 1 && py <= 16 && pz >= 1 && pz <= 16 {
+        chunk.get(UVec3::new(px - 1, py - 1, pz - 1))
+    } else {
+        world.get_voxel(world_pos).unwrap_or(VoxelType::Air)
+    };
+
+    voxel.is_solid()
+}
+
+/// Generate an SDF array from voxel data with 1-voxel padding for neighbor sampling
+/// Uses distance-based SDF for smoother surfaces at chunk boundaries
+fn generate_sdf(chunk: &Chunk, world: &VoxelWorld) -> [f32; 5832] { // 18^3 = 5832
+    let mut sdf = [1.0f32; PaddedChunkShape::USIZE];
+    let chunk_pos = chunk.position();
+    let chunk_origin = VoxelWorld::chunk_to_world(chunk_pos);
+
+    // First pass: set binary solid/air values
+    for i in 0..PaddedChunkShape::USIZE {
+        let [px, py, pz] = PaddedChunkShape::delinearize(i as u32);
+        let is_solid = sample_voxel_solid(chunk, world, chunk_origin, px, py, pz);
+        // SDF: negative inside solid, positive in air
+        sdf[i] = if is_solid { -1.0 } else { 1.0 };
+    }
+
+    // Second pass: smooth SDF values at boundaries by averaging with neighbors
+    // This creates smoother transitions and helps with chunk boundary alignment
+    let mut smoothed = sdf;
+    for i in 0..PaddedChunkShape::USIZE {
+        let [px, py, pz] = PaddedChunkShape::delinearize(i as u32);
+
+        // Only smooth interior cells (not at array edges)
+        if px > 0 && px < 17 && py > 0 && py < 17 && pz > 0 && pz < 17 {
+            let current = sdf[i];
+
+            // Check if this is a boundary cell (sign changes with any neighbor)
+            let neighbors = [
+                sdf[PaddedChunkShape::linearize([px - 1, py, pz]) as usize],
+                sdf[PaddedChunkShape::linearize([px + 1, py, pz]) as usize],
+                sdf[PaddedChunkShape::linearize([px, py - 1, pz]) as usize],
+                sdf[PaddedChunkShape::linearize([px, py + 1, pz]) as usize],
+                sdf[PaddedChunkShape::linearize([px, py, pz - 1]) as usize],
+                sdf[PaddedChunkShape::linearize([px, py, pz + 1]) as usize],
+            ];
+
+            let has_sign_change = neighbors.iter().any(|&n| (n > 0.0) != (current > 0.0));
+
+            if has_sign_change {
+                // At surface boundary, use a value between -0.5 and 0.5 for smoother interpolation
+                let neighbor_avg: f32 = neighbors.iter().sum::<f32>() / 6.0;
+                smoothed[i] = (current + neighbor_avg) * 0.5;
+            }
+        }
+    }
+
+    smoothed
+}
+
+/// Sample the voxel type at a world position for texture lookup
+fn sample_voxel_for_texture(chunk: &Chunk, world: &VoxelWorld, local_pos: Vec3) -> VoxelType {
+    // Round to nearest voxel and clamp to chunk bounds
+    let x = (local_pos.x.round() as i32).clamp(0, 15) as u32;
+    let y = (local_pos.y.round() as i32).clamp(0, 15) as u32;
+    let z = (local_pos.z.round() as i32).clamp(0, 15) as u32;
+
+    let voxel = chunk.get(UVec3::new(x, y, z));
+    if voxel.is_solid() {
+        voxel
+    } else {
+        // If we hit air, search nearby for a solid voxel
+        let chunk_origin = VoxelWorld::chunk_to_world(chunk.position());
+        for dy in [-1i32, 0, 1] {
+            for dx in [-1i32, 0, 1] {
+                for dz in [-1i32, 0, 1] {
+                    let check_pos = chunk_origin + IVec3::new(
+                        local_pos.x.round() as i32 + dx,
+                        local_pos.y.round() as i32 + dy,
+                        local_pos.z.round() as i32 + dz,
+                    );
+                    if let Some(v) = world.get_voxel(check_pos) {
+                        if v.is_solid() {
+                            return v;
+                        }
+                    }
+                }
+            }
+        }
+        VoxelType::TopSoil // Default fallback
+    }
+}
+
+/// Compute triplanar UV coordinates that tile within an atlas tile
+fn compute_triplanar_uv(pos: [f32; 3], normal: [f32; 3], atlas_idx: u8) -> [f32; 2] {
+    let cols = 4.0f32;
+    let rows = 4.0f32;
+    let col = (atlas_idx % 4) as f32;
+    let row = (atlas_idx / 4) as f32;
+
+    // UV padding to prevent bleeding
+    let padding = 0.03;
+    let tile_size = 1.0 / cols - padding * 2.0;
+    let u_base = col / cols + padding;
+    let v_base = row / rows + padding;
+
+    // Use normal to determine dominant axis for triplanar projection
+    let abs_normal = [normal[0].abs(), normal[1].abs(), normal[2].abs()];
+
+    let (u_world, v_world) = if abs_normal[1] > abs_normal[0] && abs_normal[1] > abs_normal[2] {
+        // Top/bottom face - use X and Z
+        (pos[0], pos[2])
+    } else if abs_normal[0] > abs_normal[2] {
+        // East/west face - use Z and Y
+        (pos[2], pos[1])
+    } else {
+        // North/south face - use X and Y
+        (pos[0], pos[1])
+    };
+
+    // Get fractional part, handling negative values correctly
+    // rem_euclid ensures we always get a positive value in [0, 1)
+    let u_frac = u_world.rem_euclid(1.0);
+    let v_frac = v_world.rem_euclid(1.0);
+
+    // Clamp to ensure we stay within tile bounds (avoid edge sampling issues)
+    let u_clamped = u_frac.clamp(0.01, 0.99);
+    let v_clamped = v_frac.clamp(0.01, 0.99);
+
+    let u = u_base + u_clamped * tile_size;
+    let v = v_base + v_clamped * tile_size;
+
+    // Final safety clamp to ensure valid UV coordinates
+    [
+        u.clamp(0.001, 0.999),
+        v.clamp(0.001, 0.999),
+    ]
+}
+
+/// Generate mesh using Surface Nets algorithm for smooth terrain
+pub fn generate_chunk_mesh_surface_nets(
+    chunk: &Chunk,
+    world: &VoxelWorld,
+) -> ChunkMeshResult {
+    let mut solid_mesh = MeshData::new();
+    let mut water_mesh = MeshData::new();
+
+    // Generate SDF from voxel data
+    let sdf = generate_sdf(chunk, world);
+
+    // Run surface nets on the SDF
+    // Extract the full padded region [0,0,0] to [17,17,17)
+    // Including the padding lets the mesh extend half a voxel past each edge,
+    // so neighboring chunks meet without leaving a one-voxel gap.
+    let mut buffer = SurfaceNetsBuffer::default();
+    surface_nets(
+        &sdf,
+        &PaddedChunkShape {},
+        [0; 3],  // Start at 0 (include negative padding)
+        [17; 3], // End at 17 (include positive padding)
+        &mut buffer,
+    );
+
+    // Convert surface nets output to MeshData
+    if !buffer.positions.is_empty() {
+        // Copy all vertex data, fixing any invalid values
+        for (i, pos) in buffer.positions.iter().enumerate() {
+            // Fix NaN/infinite position values
+            let safe_pos = [
+                if pos[0].is_finite() { pos[0] } else { 0.0 },
+                if pos[1].is_finite() { pos[1] } else { 0.0 },
+                if pos[2].is_finite() { pos[2] } else { 0.0 },
+            ];
+
+            // Offset positions to account for padding and apply voxel scale
+            let local_pos = Vec3::new(safe_pos[0] - 1.0, safe_pos[1] - 1.0, safe_pos[2] - 1.0);
+            solid_mesh.positions.push([
+                local_pos.x * VOXEL_SIZE,
+                local_pos.y * VOXEL_SIZE,
+                local_pos.z * VOXEL_SIZE,
+            ]);
+
+            // Get normal for this vertex, with fallback for invalid normals
+            let normal = buffer.normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]);
+            let normal = if normal[0].is_finite() && normal[1].is_finite() && normal[2].is_finite() {
+                // Ensure normal is normalized
+                let len = (normal[0]*normal[0] + normal[1]*normal[1] + normal[2]*normal[2]).sqrt();
+                if len > 0.001 {
+                    [normal[0]/len, normal[1]/len, normal[2]/len]
+                } else {
+                    [0.0, 1.0, 0.0]
+                }
+            } else {
+                [0.0, 1.0, 0.0] // Default up normal
+            };
+            solid_mesh.normals.push(normal);
+
+            // Sample voxel type at this position for texture selection
+            let voxel = sample_voxel_for_texture(chunk, world, local_pos);
+
+            // Determine atlas index based on voxel type and surface orientation
+            let atlas_idx = if normal[1] > 0.5 {
+                // Top-facing surface
+                match voxel {
+                    VoxelType::TopSoil => 0,  // Grass top
+                    _ => voxel.atlas_index(),
+                }
+            } else if normal[1] < -0.5 {
+                // Bottom-facing surface
+                match voxel {
+                    VoxelType::TopSoil => 1,  // Dirt
+                    _ => voxel.atlas_index(),
+                }
+            } else {
+                // Side-facing surface
+                match voxel {
+                    VoxelType::TopSoil => 7,  // Grass side
+                    _ => voxel.atlas_index(),
+                }
+            };
+
+            // Compute triplanar UVs that tile within the atlas tile
+            let uv = compute_triplanar_uv(safe_pos, normal, atlas_idx);
+            solid_mesh.uvs.push(uv);
+
+            // Default white vertex colors (could add AO later)
+            solid_mesh.colors.push([1.0, 1.0, 1.0, 1.0]);
+        }
+
+        // Copy all indices directly (they should all be valid now)
+        solid_mesh.indices = buffer.indices.clone();
+    }
+
+    // Water still uses blocky meshing for now
+    for x in 0..16 {
+        for y in 0..16 {
+            for z in 0..16 {
+                let local = UVec3::new(x, y, z);
+                let voxel = chunk.get(local);
+
+                if voxel.is_liquid() {
+                    check_water_face(chunk, world, local, Face::Top, &mut water_mesh, voxel);
+                    check_water_face(chunk, world, local, Face::Bottom, &mut water_mesh, voxel);
+                    check_water_face(chunk, world, local, Face::North, &mut water_mesh, voxel);
+                    check_water_face(chunk, world, local, Face::South, &mut water_mesh, voxel);
+                    check_water_face(chunk, world, local, Face::East, &mut water_mesh, voxel);
+                    check_water_face(chunk, world, local, Face::West, &mut water_mesh, voxel);
+                }
+            }
+        }
+    }
+
+    ChunkMeshResult {
+        solid: solid_mesh,
+        water: water_mesh,
+    }
+}
+
+/// Mesh generation mode
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MeshMode {
+    /// Traditional blocky voxel meshing (Minecraft-style)
+    #[default]
+    Blocky,
+    /// Smooth meshing using Surface Nets algorithm
+    SurfaceNets,
+}
+
+/// Resource to control mesh generation mode globally
+#[derive(Resource, Clone, Copy, Debug)]
+pub struct MeshSettings {
+    pub mode: MeshMode,
+}
+
+impl Default for MeshSettings {
+    fn default() -> Self {
+        Self {
+            mode: MeshMode::Blocky,
+        }
+    }
+}
+
+/// Generate chunk mesh using the specified mode
+pub fn generate_chunk_mesh_with_mode(
+    chunk: &Chunk,
+    world: &VoxelWorld,
+    mode: MeshMode,
+) -> ChunkMeshResult {
+    match mode {
+        MeshMode::Blocky => generate_chunk_mesh(chunk, world),
+        MeshMode::SurfaceNets => generate_chunk_mesh_surface_nets(chunk, world),
+    }
 }
 
