@@ -11,7 +11,9 @@
       "Bash(powershell -Command:*)",
       "Bash(cargo build:*)",
       "Bash(python scripts/build_atlas.py:*)",
-      "Bash(del /F world_data.bin)"
+      "Bash(del /F world_data.bin)",
+      "Bash(timeout /t)",
+      "Bash(timeout /t 3)"
     ],
     "deny": [],
     "ask": []

@@ -36,6 +36,7 @@ pub fn setup_voxel_material(
     });
 
     // Water material - semi-transparent blue with proper depth handling
+    // Use positive depth_bias to push water behind terrain, preventing visible seams
     let water_handle = materials.add(StandardMaterial {
         base_color: Color::srgba(0.2, 0.5, 0.8, 0.7), // Brighter blue with transparency
         alpha_mode: AlphaMode::Blend,
@@ -44,7 +45,7 @@ pub fn setup_voxel_material(
         reflectance: 0.8, // High reflection for water look
         double_sided: true, // Visible from below
         cull_mode: None, // Render both sides
-        depth_bias: 0.0,
+        depth_bias: 1.0, // Push water behind terrain to hide seams
         ..default()
     });
 
