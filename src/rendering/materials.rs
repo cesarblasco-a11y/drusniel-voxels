@@ -77,21 +77,23 @@ pub fn configure_atlas_sampler(
     }
 }
 
-/// Setup triplanar terrain material for surface nets meshes
+/// Setup triplanar terrain material for surface nets meshes with PBR textures
 pub fn setup_triplanar_material(
     mut commands: Commands,
     mut materials: ResMut<Assets<TriplanarMaterial>>,
-    atlas: Res<TextureAtlas>,
+    asset_server: Res<AssetServer>,
 ) {
+    // Load PBR textures from assets/pbr/rock/
     let material_handle = materials.add(TriplanarMaterial {
         uniforms: TriplanarUniforms {
             base_color: LinearRgba::WHITE,
-            tex_scale: 4.0,        // 1 texture tile per 4 world units
-            blend_sharpness: 4.0,  // Moderate blend
-            atlas_size: 4.0,       // 4x4 atlas
-            padding: 0.03,         // 3% padding
+            tex_scale: 2.0,         // Higher resolution (1 tile per 2 world units)
+            blend_sharpness: 4.0,   // Moderate blend between projections
+            normal_intensity: 1.0,  // Full normal map strength
+            _padding: 0.0,
         },
-        color_texture: Some(atlas.handle.clone()),
+        color_texture: Some(asset_server.load("pbr/rock/albedo.png")),
+        normal_texture: Some(asset_server.load("pbr/rock/normal.png")),
     });
 
     commands.insert_resource(TriplanarMaterialHandle {

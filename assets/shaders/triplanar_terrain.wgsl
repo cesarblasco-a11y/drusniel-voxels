@@ -1,101 +1,117 @@
-// True triplanar terrain shader with 3-sample blending
+// Triplanar PBR terrain shader with normal mapping
 // Fragment-only shader that uses Bevy's standard vertex outputs
 
 #import bevy_pbr::forward_io::VertexOutput
 
-// Combined triplanar uniforms - matches TriplanarUniforms struct
+// Triplanar uniforms - matches TriplanarUniforms struct in Rust
 struct TriplanarUniforms {
     base_color: vec4<f32>,     // Base color tint
-    tex_scale: f32,            // World units per texture tile
+    tex_scale: f32,            // World units per texture tile (lower = higher res)
     blend_sharpness: f32,      // Controls blend falloff (higher = sharper)
-    atlas_size: f32,           // Number of tiles per row/column (e.g., 4.0)
-    padding: f32,              // UV padding to prevent bleeding
+    normal_intensity: f32,     // Normal map strength
+    _padding: f32,             // Padding for alignment
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> uniforms: TriplanarUniforms;
 @group(#{MATERIAL_BIND_GROUP}) @binding(1) var color_texture: texture_2d<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(2) var color_sampler: sampler;
+@group(#{MATERIAL_BIND_GROUP}) @binding(2) var tex_sampler: sampler;
+@group(#{MATERIAL_BIND_GROUP}) @binding(3) var normal_texture: texture_2d<f32>;
 
-// Compute UV within an atlas tile for a given world coordinate pair
-fn compute_tile_uv(world_coord: vec2<f32>, atlas_index: u32) -> vec2<f32> {
-    let atlas_size = uniforms.atlas_size;
+// Compute tiled UV from world coordinates
+fn compute_uv(world_coord: vec2<f32>) -> vec2<f32> {
     let tex_scale = uniforms.tex_scale;
-    let padding = uniforms.padding;
-
-    let tile_size = 1.0 / atlas_size;
-    let usable_size = tile_size - padding * 2.0;
-
-    let tile_x = f32(atlas_index % u32(atlas_size));
-    let tile_y = f32(atlas_index / u32(atlas_size));
-
-    let u_base = tile_x * tile_size + padding;
-    let v_base = tile_y * tile_size + padding;
-
-    // Scale world coordinates and get fractional part for tiling
     let scaled = world_coord / tex_scale;
-
-    // Use fract to get repeating pattern, handling negatives correctly
-    var frac_u = fract(scaled.x);
-    var frac_v = fract(scaled.y);
-
-    // Clamp to avoid edge bleeding
-    frac_u = clamp(frac_u, 0.01, 0.99);
-    frac_v = clamp(frac_v, 0.01, 0.99);
-
-    return vec2(
-        u_base + frac_u * usable_size,
-        v_base + frac_v * usable_size
-    );
+    return fract(scaled);
 }
 
 // Calculate triplanar blend weights from world normal
 fn triplanar_weights(world_normal: vec3<f32>) -> vec3<f32> {
     let sharpness = uniforms.blend_sharpness;
-
-    // Compute blend weights from absolute normal components
     var weights = pow(abs(world_normal), vec3(sharpness));
-
-    // Normalize so weights sum to 1
     let weight_sum = weights.x + weights.y + weights.z;
     weights = weights / max(weight_sum, 0.001);
-
     return weights;
+}
+
+// Unpack normal from texture (0-1 range to -1 to 1 range)
+fn unpack_normal(sampled: vec3<f32>) -> vec3<f32> {
+    return normalize(sampled * 2.0 - 1.0);
+}
+
+// Reorient tangent-space normal to world space for a triplanar projection
+fn reorient_normal(tangent_normal: vec3<f32>, world_normal: vec3<f32>, axis: i32) -> vec3<f32> {
+    var n = tangent_normal;
+    let intensity = uniforms.normal_intensity;
+    n = vec3(n.xy * intensity, n.z);
+    n = normalize(n);
+    
+    var world_n: vec3<f32>;
+    if (axis == 0) {
+        // X-facing: right vector is +Z, up is +Y
+        world_n = vec3(n.z * sign(world_normal.x), n.y, n.x);
+    } else if (axis == 1) {
+        // Y-facing (ground): right is +X, up is +Z
+        world_n = vec3(n.x, n.z * sign(world_normal.y), n.y);
+    } else {
+        // Z-facing: right is +X, up is +Y  
+        world_n = vec3(n.x, n.y, n.z * sign(world_normal.z));
+    }
+    
+    return normalize(world_n);
 }
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
-    // Get atlas index from UV.x (stored by meshing code)
-    let atlas_idx = u32(in.uv.x + 0.5);
-
     let world_pos = in.world_position.xyz;
     let world_normal = normalize(in.world_normal);
 
-    // Calculate blend weights
+    // Calculate blend weights based on normal
     let weights = triplanar_weights(world_normal);
 
     // Compute UVs for each projection plane
-    let uv_yz = compute_tile_uv(world_pos.yz, atlas_idx);  // X-facing (east/west)
-    let uv_xz = compute_tile_uv(world_pos.xz, atlas_idx);  // Y-facing (top/bottom)
-    let uv_xy = compute_tile_uv(world_pos.xy, atlas_idx);  // Z-facing (north/south)
+    let uv_yz = compute_uv(world_pos.yz);  // X-facing 
+    let uv_xz = compute_uv(world_pos.xz);  // Y-facing (ground)
+    let uv_xy = compute_uv(world_pos.xy);  // Z-facing
 
-    // Sample texture from all 3 projections
-    let sample_x = textureSample(color_texture, color_sampler, uv_yz);
-    let sample_y = textureSample(color_texture, color_sampler, uv_xz);
-    let sample_z = textureSample(color_texture, color_sampler, uv_xy);
+    // Sample albedo from all 3 projections (using shared sampler)
+    let albedo_x = textureSample(color_texture, tex_sampler, uv_yz);
+    let albedo_y = textureSample(color_texture, tex_sampler, uv_xz);
+    let albedo_z = textureSample(color_texture, tex_sampler, uv_xy);
+    
+    // Blend albedo
+    var albedo = albedo_x * weights.x + albedo_y * weights.y + albedo_z * weights.z;
+    albedo = albedo * uniforms.base_color;
 
-    // Blend samples based on weights
-    var color = sample_x * weights.x + sample_y * weights.y + sample_z * weights.z;
+    // Sample normal maps from all 3 projections
+    let normal_x_raw = textureSample(normal_texture, tex_sampler, uv_yz).rgb;
+    let normal_y_raw = textureSample(normal_texture, tex_sampler, uv_xz).rgb;
+    let normal_z_raw = textureSample(normal_texture, tex_sampler, uv_xy).rgb;
+    
+    // Unpack and reorient normals to world space
+    let normal_x = reorient_normal(unpack_normal(normal_x_raw), world_normal, 0);
+    let normal_y = reorient_normal(unpack_normal(normal_y_raw), world_normal, 1);
+    let normal_z = reorient_normal(unpack_normal(normal_z_raw), world_normal, 2);
+    
+    // Blend world-space normals using weights
+    var blended_normal = normal_x * weights.x + normal_y * weights.y + normal_z * weights.z;
+    blended_normal = normalize(blended_normal);
 
-    // Apply base color tint
-    color = color * uniforms.base_color;
+    // PBR-style lighting
+    let light_dir = normalize(vec3(0.4, 0.8, 0.3));  // Sun direction
+    let view_dir = normalize(-in.world_position.xyz);  // Approximate view direction
+    let half_dir = normalize(light_dir + view_dir);
+    
+    // Diffuse (Lambert)
+    let ndotl = max(dot(blended_normal, light_dir), 0.0);
+    let ambient = 0.35;
+    let diffuse = ndotl * 0.65;
+    
+    // Specular (subtle fixed roughness)
+    let ndoth = max(dot(blended_normal, half_dir), 0.0);
+    let specular = pow(ndoth, 32.0) * 0.15;
+    
+    // Combine lighting
+    let lit_color = albedo.rgb * (ambient + diffuse) + vec3(specular);
 
-    // Simple directional lighting
-    let light_dir = normalize(vec3(0.3, 1.0, 0.2));
-    let ndotl = max(dot(world_normal, light_dir), 0.0);
-    let ambient = 0.4;
-    let diffuse = 0.6 * ndotl;
-
-    let lit_color = color.rgb * (ambient + diffuse);
-
-    return vec4(lit_color, color.a);
+    return vec4(lit_color, albedo.a);
 }

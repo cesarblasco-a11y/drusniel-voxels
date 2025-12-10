@@ -9,37 +9,42 @@ use bevy_shader::ShaderRef;
 pub struct TriplanarUniforms {
     /// Base color tint (vec4)
     pub base_color: LinearRgba,
-    /// World units per texture repeat (e.g., 4.0 = 1 tile per 4 world units)
+    /// World units per texture repeat (lower = higher resolution, e.g., 2.0)
     pub tex_scale: f32,
     /// How sharply to blend between projections (higher = sharper transitions)
     pub blend_sharpness: f32,
-    /// Number of tiles per row/column in atlas (e.g., 4.0 for 4x4 atlas)
-    pub atlas_size: f32,
-    /// UV padding to prevent bleeding at tile edges
-    pub padding: f32,
+    /// Normal map intensity (1.0 = full strength)
+    pub normal_intensity: f32,
+    /// Padding for alignment
+    pub _padding: f32,
 }
 
 impl Default for TriplanarUniforms {
     fn default() -> Self {
         Self {
             base_color: LinearRgba::WHITE,
-            tex_scale: 4.0,
+            tex_scale: 2.0,
             blend_sharpness: 4.0,
-            atlas_size: 4.0,
-            padding: 0.03,
+            normal_intensity: 1.0,
+            _padding: 0.0,
         }
     }
 }
 
-/// Custom triplanar terrain material with true 3-sample blending
+/// Custom triplanar PBR terrain material with normal mapping
 #[derive(Asset, TypePath, AsBindGroup, Clone, Debug)]
 pub struct TriplanarMaterial {
     #[uniform(0)]
     pub uniforms: TriplanarUniforms,
 
+    /// Albedo/diffuse texture with its sampler
     #[texture(1)]
     #[sampler(2)]
     pub color_texture: Option<Handle<Image>>,
+
+    /// Normal map texture (shares sampler at binding 2)
+    #[texture(3)]
+    pub normal_texture: Option<Handle<Image>>,
 }
 
 impl Default for TriplanarMaterial {
@@ -47,6 +52,7 @@ impl Default for TriplanarMaterial {
         Self {
             uniforms: TriplanarUniforms::default(),
             color_texture: None,
+            normal_texture: None,
         }
     }
 }
