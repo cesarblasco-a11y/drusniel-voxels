@@ -6,6 +6,22 @@ use crate::voxel::types::{VoxelType, Voxel};
 #[derive(Component)]
 pub struct BlockHighlight;
 
+/// Component to mark the debug overlay text
+#[derive(Component)]
+pub struct DebugOverlay;
+
+/// Resource to track debug overlay visibility
+#[derive(Resource)]
+pub struct DebugOverlayState {
+    pub visible: bool,
+}
+
+impl Default for DebugOverlayState {
+    fn default() -> Self {
+        Self { visible: false }
+    }
+}
+
 /// Resource tracking the currently targeted block
 #[derive(Resource, Default)]
 pub struct TargetedBlock {
@@ -307,6 +323,44 @@ pub fn debug_voxel_info_system(
                 info!("  Chunk exists: YES");
             } else {
                 info!("  Chunk exists: NO!");
+            }
+
+            // Scan for nearby water (3x3x3 area around targeted block)
+            info!("  === WATER SCAN (5x5x5 area) ===");
+            let mut water_positions = Vec::new();
+            for dx in -2..=2 {
+                for dy in -2..=2 {
+                    for dz in -2..=2 {
+                        let scan_pos = pos + IVec3::new(dx, dy, dz);
+                        if let Some(voxel) = world.get_voxel(scan_pos) {
+                            if voxel.is_liquid() {
+                                water_positions.push((scan_pos, dx, dy, dz));
+                            }
+                        }
+                    }
+                }
+            }
+
+            if water_positions.is_empty() {
+                info!("    No water found in 5x5x5 area");
+            } else {
+                info!("    Found {} water voxels nearby:", water_positions.len());
+                for (water_pos, dx, dy, dz) in water_positions.iter().take(10) {
+                    // Check what's adjacent to this water
+                    let mut adjacent_air = 0;
+                    let mut adjacent_solid = 0;
+                    for offset in [IVec3::X, IVec3::NEG_X, IVec3::Y, IVec3::NEG_Y, IVec3::Z, IVec3::NEG_Z] {
+                        if let Some(adj) = world.get_voxel(*water_pos + offset) {
+                            if adj == VoxelType::Air { adjacent_air += 1; }
+                            else if adj.is_solid() { adjacent_solid += 1; }
+                        }
+                    }
+                    info!("      Water at {:?} (offset: {},{},{}) adj_air:{} adj_solid:{}",
+                        water_pos, dx, dy, dz, adjacent_air, adjacent_solid);
+                }
+                if water_positions.len() > 10 {
+                    info!("      ... and {} more", water_positions.len() - 10);
+                }
             }
         } else {
             info!("No block targeted");

@@ -37,8 +37,9 @@ pub fn setup_voxel_material(
 
     // Water material - semi-transparent blue with proper depth handling
     // Use positive depth_bias to push water behind terrain, preventing visible seams
+    // DEBUG: Using bright magenta to identify water cracks - change back to blue after debugging
     let water_handle = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.2, 0.5, 0.8, 0.7), // Brighter blue with transparency
+        base_color: Color::srgba(1.0, 0.0, 1.0, 0.7), // DEBUG: Bright magenta to identify water
         alpha_mode: AlphaMode::Blend,
         perceptual_roughness: 0.05, // Very smooth surface
         metallic: 0.0,
