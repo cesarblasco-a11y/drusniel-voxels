@@ -742,6 +742,12 @@ pub fn generate_chunk_mesh_surface_nets(
     let mut water_mesh = MeshData::new();
     let chunk_origin = VoxelWorld::chunk_to_world(chunk.position());
 
+    // Scale factor to slightly enlarge chunks so they overlap at boundaries
+    // This prevents gaps (sky showing through) at chunk seams caused by
+    // independent SDF smoothing per chunk producing slightly different vertex positions
+    const CHUNK_SCALE: f32 = 1.002; // 0.2% larger
+    let chunk_center = Vec3::new(8.0, 8.0, 8.0) * VOXEL_SIZE; // Center of 16x16x16 chunk
+
     // Generate SDF from voxel data
     let sdf = generate_sdf(chunk, world);
 
@@ -853,20 +859,27 @@ pub fn generate_chunk_mesh_surface_nets(
             // Add all 3 vertices for this triangle (not shared)
             let base_idx = solid_mesh.positions.len() as u32;
 
+            // Helper to scale vertex position outward from chunk center to close seams
+            let scale_vertex = |local: Vec3| -> [f32; 3] {
+                let pos = Vec3::new(local.x * VOXEL_SIZE, local.y * VOXEL_SIZE, local.z * VOXEL_SIZE);
+                let scaled = chunk_center + (pos - chunk_center) * CHUNK_SCALE;
+                [scaled.x, scaled.y, scaled.z]
+            };
+
             // Vertex 0
-            solid_mesh.positions.push([local0.x * VOXEL_SIZE, local0.y * VOXEL_SIZE, local0.z * VOXEL_SIZE]);
+            solid_mesh.positions.push(scale_vertex(local0));
             solid_mesh.normals.push(normal0);
             solid_mesh.uvs.push([atlas_idx as f32, 0.0]);
             solid_mesh.colors.push([1.0, 1.0, 1.0, 1.0]);
 
             // Vertex 1
-            solid_mesh.positions.push([local1.x * VOXEL_SIZE, local1.y * VOXEL_SIZE, local1.z * VOXEL_SIZE]);
+            solid_mesh.positions.push(scale_vertex(local1));
             solid_mesh.normals.push(normal1);
             solid_mesh.uvs.push([atlas_idx as f32, 0.0]);
             solid_mesh.colors.push([1.0, 1.0, 1.0, 1.0]);
 
             // Vertex 2
-            solid_mesh.positions.push([local2.x * VOXEL_SIZE, local2.y * VOXEL_SIZE, local2.z * VOXEL_SIZE]);
+            solid_mesh.positions.push(scale_vertex(local2));
             solid_mesh.normals.push(normal2);
             solid_mesh.uvs.push([atlas_idx as f32, 0.0]);
             solid_mesh.colors.push([1.0, 1.0, 1.0, 1.0]);
