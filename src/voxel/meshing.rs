@@ -492,29 +492,39 @@ fn add_face_no_ao(
     let z = local.z as f32 * VOXEL_SIZE;
     let s = VOXEL_SIZE;
 
+    // Inset water faces slightly to prevent them showing through terrain gaps
+    // The smooth terrain mesh may not perfectly align with blocky water mesh
+    let inset = 0.05;
+
     let (v0, v1, v2, v3, normal) = match face {
         Face::Top => (
-            [x, y + s, z + s], [x + s, y + s, z + s], [x + s, y + s, z], [x, y + s, z],
+            [x + inset, y + s - inset, z + s - inset], [x + s - inset, y + s - inset, z + s - inset],
+            [x + s - inset, y + s - inset, z + inset], [x + inset, y + s - inset, z + inset],
             [0.0, 1.0, 0.0]
         ),
         Face::Bottom => (
-            [x, y, z], [x + s, y, z], [x + s, y, z + s], [x, y, z + s],
+            [x + inset, y + inset, z + inset], [x + s - inset, y + inset, z + inset],
+            [x + s - inset, y + inset, z + s - inset], [x + inset, y + inset, z + s - inset],
             [0.0, -1.0, 0.0]
         ),
         Face::North => (
-            [x + s, y, z], [x, y, z], [x, y + s, z], [x + s, y + s, z],
+            [x + s - inset, y + inset, z + inset], [x + inset, y + inset, z + inset],
+            [x + inset, y + s - inset, z + inset], [x + s - inset, y + s - inset, z + inset],
             [0.0, 0.0, -1.0]
         ),
         Face::South => (
-            [x, y, z + s], [x + s, y, z + s], [x + s, y + s, z + s], [x, y + s, z + s],
+            [x + inset, y + inset, z + s - inset], [x + s - inset, y + inset, z + s - inset],
+            [x + s - inset, y + s - inset, z + s - inset], [x + inset, y + s - inset, z + s - inset],
             [0.0, 0.0, 1.0]
         ),
         Face::East => (
-            [x + s, y, z + s], [x + s, y, z], [x + s, y + s, z], [x + s, y + s, z + s],
+            [x + s - inset, y + inset, z + s - inset], [x + s - inset, y + inset, z + inset],
+            [x + s - inset, y + s - inset, z + inset], [x + s - inset, y + s - inset, z + s - inset],
             [1.0, 0.0, 0.0]
         ),
         Face::West => (
-            [x, y, z], [x, y, z + s], [x, y + s, z + s], [x, y + s, z],
+            [x + inset, y + inset, z + inset], [x + inset, y + inset, z + s - inset],
+            [x + inset, y + s - inset, z + s - inset], [x + inset, y + s - inset, z + inset],
             [-1.0, 0.0, 0.0]
         ),
     };
@@ -572,7 +582,9 @@ fn add_face_no_ao(
 /// Padded chunk shape for surface nets (18x18x18 for 16x16x16 chunk + 1 padding)
 type PaddedChunkShape = ConstShape3u32<18, 18, 18>;
 
-/// Sample voxel from world or chunk, returns true if solid
+/// Sample voxel from world or chunk, returns true if solid OR water
+/// Water is treated as solid for SDF purposes to prevent surface nets from generating
+/// surfaces at solid-water boundaries (which would create visible seams with the blocky water mesh)
 fn sample_voxel_solid(chunk: &Chunk, world: &VoxelWorld, chunk_origin: IVec3, px: u32, py: u32, pz: u32) -> bool {
     let world_pos = chunk_origin + IVec3::new(px as i32 - 1, py as i32 - 1, pz as i32 - 1);
 
@@ -582,7 +594,8 @@ fn sample_voxel_solid(chunk: &Chunk, world: &VoxelWorld, chunk_origin: IVec3, px
         world.get_voxel(world_pos).unwrap_or(VoxelType::Air)
     };
 
-    voxel.is_solid()
+    // Treat water as solid for SDF so we don't generate surfaces at solid-water boundaries
+    voxel.is_solid() || voxel.is_liquid()
 }
 
 /// Generate an SDF array from voxel data with 1-voxel padding for neighbor sampling
@@ -635,35 +648,40 @@ fn generate_sdf(chunk: &Chunk, world: &VoxelWorld) -> [f32; 5832] { // 18^3 = 58
 
 /// Sample the voxel type at a world position for texture lookup
 fn sample_voxel_for_texture(chunk: &Chunk, world: &VoxelWorld, local_pos: Vec3) -> VoxelType {
-    // Round to nearest voxel and clamp to chunk bounds
-    let x = (local_pos.x.round() as i32).clamp(0, 15) as u32;
-    let y = (local_pos.y.round() as i32).clamp(0, 15) as u32;
-    let z = (local_pos.z.round() as i32).clamp(0, 15) as u32;
+    // Convert local position to world position for accurate sampling
+    // This handles positions outside the [0,15] range due to Surface Nets padding
+    let chunk_origin = VoxelWorld::chunk_to_world(chunk.position());
+    let world_pos = IVec3::new(
+        chunk_origin.x + local_pos.x.round() as i32,
+        chunk_origin.y + local_pos.y.round() as i32,
+        chunk_origin.z + local_pos.z.round() as i32,
+    );
 
-    let voxel = chunk.get(UVec3::new(x, y, z));
-    if voxel.is_solid() {
-        voxel
-    } else {
-        // If we hit air, search nearby for a solid voxel
-        let chunk_origin = VoxelWorld::chunk_to_world(chunk.position());
-        for dy in [-1i32, 0, 1] {
-            for dx in [-1i32, 0, 1] {
-                for dz in [-1i32, 0, 1] {
-                    let check_pos = chunk_origin + IVec3::new(
-                        local_pos.x.round() as i32 + dx,
-                        local_pos.y.round() as i32 + dy,
-                        local_pos.z.round() as i32 + dz,
-                    );
-                    if let Some(v) = world.get_voxel(check_pos) {
-                        if v.is_solid() {
-                            return v;
-                        }
+    // First try exact position
+    if let Some(voxel) = world.get_voxel(world_pos) {
+        if voxel.is_solid() {
+            return voxel;
+        }
+    }
+
+    // If we hit air/water, search nearby for a solid voxel
+    // Prioritize searching upward first (more likely to find terrain surface)
+    for dy in [0i32, -1, 1, -2, 2] {
+        for dx in [-1i32, 0, 1] {
+            for dz in [-1i32, 0, 1] {
+                if dx == 0 && dy == 0 && dz == 0 {
+                    continue; // Already checked
+                }
+                let check_pos = world_pos + IVec3::new(dx, dy, dz);
+                if let Some(v) = world.get_voxel(check_pos) {
+                    if v.is_solid() {
+                        return v;
                     }
                 }
             }
         }
-        VoxelType::TopSoil // Default fallback
     }
+    VoxelType::TopSoil // Default fallback
 }
 
 /// Compute planar UV coordinates in world space that tile within an atlas tile
@@ -724,6 +742,12 @@ pub fn generate_chunk_mesh_surface_nets(
     let mut water_mesh = MeshData::new();
     let chunk_origin = VoxelWorld::chunk_to_world(chunk.position());
 
+    // Scale factor to slightly enlarge chunks so they overlap at boundaries
+    // This prevents gaps (sky showing through) at chunk seams caused by
+    // independent SDF smoothing per chunk producing slightly different vertex positions
+    const CHUNK_SCALE: f32 = 1.01; // 1.0% larger overlap
+    let chunk_center = Vec3::new(8.0, 8.0, 8.0) * VOXEL_SIZE; // Center of 16x16x16 chunk
+
     // Generate SDF from voxel data
     let sdf = generate_sdf(chunk, world);
 
@@ -741,78 +765,183 @@ pub fn generate_chunk_mesh_surface_nets(
     );
 
     // Convert surface nets output to MeshData
-    if !buffer.positions.is_empty() {
-        // Copy all vertex data, fixing any invalid values
-        for (i, pos) in buffer.positions.iter().enumerate() {
-            // Fix NaN/infinite position values
-            let safe_pos = [
-                if pos[0].is_finite() { pos[0] } else { 0.0 },
-                if pos[1].is_finite() { pos[1] } else { 0.0 },
-                if pos[2].is_finite() { pos[2] } else { 0.0 },
-            ];
+    // Use per-triangle vertices to ensure consistent material indices (no interpolation artifacts)
+    if !buffer.positions.is_empty() && !buffer.indices.is_empty() {
+        // Process triangles one at a time, duplicating vertices per triangle
+        // This prevents atlas index interpolation between different materials
+        for tri_idx in (0..buffer.indices.len()).step_by(3) {
+            let i0 = buffer.indices[tri_idx] as usize;
+            let i1 = buffer.indices[tri_idx + 1] as usize;
+            let i2 = buffer.indices[tri_idx + 2] as usize;
 
-            // Offset positions to account for padding and apply voxel scale
-            let local_pos = Vec3::new(safe_pos[0] - 1.0, safe_pos[1] - 1.0, safe_pos[2] - 1.0);
-            solid_mesh.positions.push([
-                local_pos.x * VOXEL_SIZE,
-                local_pos.y * VOXEL_SIZE,
-                local_pos.z * VOXEL_SIZE,
-            ]);
-            let world_pos = Vec3::new(
-                chunk_origin.x as f32 + local_pos.x,
-                chunk_origin.y as f32 + local_pos.y,
-                chunk_origin.z as f32 + local_pos.z,
-            );
+            // Get positions for this triangle
+            let pos0 = buffer.positions.get(i0).copied().unwrap_or([0.0; 3]);
+            let pos1 = buffer.positions.get(i1).copied().unwrap_or([0.0; 3]);
+            let pos2 = buffer.positions.get(i2).copied().unwrap_or([0.0; 3]);
 
-            // Get normal for this vertex, with fallback for invalid normals
-            let normal = buffer.normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]);
-            let normal = if normal[0].is_finite() && normal[1].is_finite() && normal[2].is_finite() {
-                // Ensure normal is normalized
-                let len = (normal[0]*normal[0] + normal[1]*normal[1] + normal[2]*normal[2]).sqrt();
-                if len > 0.001 {
-                    [normal[0]/len, normal[1]/len, normal[2]/len]
+            // Fix NaN/infinite values
+            let safe_pos = |pos: [f32; 3]| -> [f32; 3] {
+                [
+                    if pos[0].is_finite() { pos[0] } else { 0.0 },
+                    if pos[1].is_finite() { pos[1] } else { 0.0 },
+                    if pos[2].is_finite() { pos[2] } else { 0.0 },
+                ]
+            };
+
+            let safe_pos0 = safe_pos(pos0);
+            let safe_pos1 = safe_pos(pos1);
+            let safe_pos2 = safe_pos(pos2);
+
+            // Calculate local positions (offset for padding)
+            let local0 = Vec3::new(safe_pos0[0] - 1.0, safe_pos0[1] - 1.0, safe_pos0[2] - 1.0);
+            let local1 = Vec3::new(safe_pos1[0] - 1.0, safe_pos1[1] - 1.0, safe_pos1[2] - 1.0);
+            let local2 = Vec3::new(safe_pos2[0] - 1.0, safe_pos2[1] - 1.0, safe_pos2[2] - 1.0);
+
+            // Calculate triangle centroid for material sampling
+            let centroid = (local0 + local1 + local2) / 3.0;
+
+            // Get normals for this triangle
+            let get_normal = |i: usize| -> [f32; 3] {
+                let n = buffer.normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]);
+                if n[0].is_finite() && n[1].is_finite() && n[2].is_finite() {
+                    let len = (n[0]*n[0] + n[1]*n[1] + n[2]*n[2]).sqrt();
+                    if len > 0.001 {
+                        [n[0]/len, n[1]/len, n[2]/len]
+                    } else {
+                        [0.0, 1.0, 0.0]
+                    }
                 } else {
                     [0.0, 1.0, 0.0]
                 }
-            } else {
-                [0.0, 1.0, 0.0] // Default up normal
-            };
-            solid_mesh.normals.push(normal);
-
-            // Sample voxel type at this position for texture selection
-            let voxel = sample_voxel_for_texture(chunk, world, local_pos);
-
-            // Determine atlas index based on voxel type and surface orientation
-            let atlas_idx = if normal[1] > 0.5 {
-                // Top-facing surface
-                match voxel {
-                    VoxelType::TopSoil => 0,  // Grass top
-                    _ => voxel.atlas_index(),
-                }
-            } else if normal[1] < -0.5 {
-                // Bottom-facing surface
-                match voxel {
-                    VoxelType::TopSoil => 1,  // Dirt
-                    _ => voxel.atlas_index(),
-                }
-            } else {
-                // Side-facing surface
-                match voxel {
-                    VoxelType::TopSoil => 7,  // Grass side
-                    _ => voxel.atlas_index(),
-                }
             };
 
-            // Compute triplanar UVs that tile within the atlas tile
-            let uv = compute_triplanar_uv(world_pos, normal, atlas_idx);
-            solid_mesh.uvs.push(uv);
+            let normal0 = get_normal(i0);
+            let normal1 = get_normal(i1);
+            let normal2 = get_normal(i2);
 
-            // Default white vertex colors (could add AO later)
-            solid_mesh.colors.push([1.0, 1.0, 1.0, 1.0]);
+            // Average normal for the triangle (used for material selection)
+            let avg_normal = [
+                (normal0[0] + normal1[0] + normal2[0]) / 3.0,
+                (normal0[1] + normal1[1] + normal2[1]) / 3.0,
+                (normal0[2] + normal1[2] + normal2[2]) / 3.0,
+            ];
+            let avg_len = (avg_normal[0]*avg_normal[0] + avg_normal[1]*avg_normal[1] + avg_normal[2]*avg_normal[2]).sqrt();
+            let avg_normal = if avg_len > 0.001 {
+                [avg_normal[0]/avg_len, avg_normal[1]/avg_len, avg_normal[2]/avg_len]
+            } else {
+                [0.0, 1.0, 0.0]
+            };
+
+            // Calculate material weights for each vertex
+            let compute_vertex_weights = |local_pos: Vec3| -> [f32; 4] {
+                let mut weights = [0.0f32; 4];
+                let mut total_weight = 0.0;
+                
+                // Check 8 neighbors of the cell containing the vertex
+                let base_x = local_pos.x.floor() as i32;
+                let base_y = local_pos.y.floor() as i32;
+                let base_z = local_pos.z.floor() as i32;
+                
+                let chunk_pos = chunk.position();
+                let chunk_origin = VoxelWorld::chunk_to_world(chunk_pos);
+
+                for dz in 0..2 {
+                    for dy in 0..2 {
+                        for dx in 0..2 {
+                            let lx = base_x + dx;
+                            let ly = base_y + dy;
+                            let lz = base_z + dz;
+                            
+                            let voxel = if lx >= 0 && lx < 16 && ly >= 0 && ly < 16 && lz >= 0 && lz < 16 {
+                                chunk.get(UVec3::new(lx as u32, ly as u32, lz as u32))
+                            } else {
+                                let wx = chunk_origin.x + lx;
+                                let wy = chunk_origin.y + ly;
+                                let wz = chunk_origin.z + lz;
+                                world.get_voxel(IVec3::new(wx, wy, wz)).unwrap_or(VoxelType::Air)
+                            };
+
+                            if voxel != VoxelType::Air && voxel != VoxelType::Water {
+                                let mat_idx = match voxel {
+                                    VoxelType::TopSoil => 0, // Grass
+                                    
+                                    VoxelType::Rock | VoxelType::Bedrock | 
+                                    VoxelType::DungeonWall | VoxelType::DungeonFloor => 1, // Rock
+                                    
+                                    VoxelType::Sand => 2, // Sand
+                                    
+                                    // Everything else maps to Dirt
+                                    VoxelType::SubSoil | VoxelType::Clay | 
+                                    VoxelType::Wood | VoxelType::Leaves | _ => 3, 
+                                };
+                                
+                                // Distance-based weighting (closer voxels have more influence)
+                                // This assumes local_pos is within the cell [base, base+1]
+                                // let dist_sq = (lx as f32 - local_pos.x).powi(2) + 
+                                //               (ly as f32 - local_pos.y).powi(2) + 
+                                //               (lz as f32 - local_pos.z).powi(2);
+                                // let weight = 1.0 / (dist_sq + 0.001);
+                                
+                                // Simple binary presence also works well for Surface Nets
+                                let weight = 1.0;
+                                
+                                weights[mat_idx] += weight;
+                                total_weight += weight;
+                            }
+                        }
+                    }
+                }
+                
+                if total_weight > 0.0 {
+                    [
+                        weights[0] / total_weight,
+                        weights[1] / total_weight,
+                        weights[2] / total_weight,
+                        weights[3] / total_weight,
+                    ]
+                } else {
+                    // Default to dirt if isolated (shouldn't happen for valid mesh)
+                    [0.0, 0.0, 0.0, 1.0] 
+                }
+            };
+
+            let weights0 = compute_vertex_weights(local0);
+            let weights1 = compute_vertex_weights(local1);
+            let weights2 = compute_vertex_weights(local2);
+
+            // Add all 3 vertices for this triangle (not shared)
+            let base_idx = solid_mesh.positions.len() as u32;
+
+            // Helper to scale vertex position outward from chunk center to close seams
+            let scale_vertex = |local: Vec3| -> [f32; 3] {
+                let pos = Vec3::new(local.x * VOXEL_SIZE, local.y * VOXEL_SIZE, local.z * VOXEL_SIZE);
+                let scaled = chunk_center + (pos - chunk_center) * CHUNK_SCALE;
+                [scaled.x, scaled.y, scaled.z]
+            };
+
+            // Vertex 0
+            solid_mesh.positions.push(scale_vertex(local0));
+            solid_mesh.normals.push(normal0);
+            solid_mesh.uvs.push([0.0, 0.0]); // UVs not used for splatting logic
+            solid_mesh.colors.push(weights0);
+
+            // Vertex 1
+            solid_mesh.positions.push(scale_vertex(local1));
+            solid_mesh.normals.push(normal1);
+            solid_mesh.uvs.push([0.0, 0.0]);
+            solid_mesh.colors.push(weights1);
+
+            // Vertex 2
+            solid_mesh.positions.push(scale_vertex(local2));
+            solid_mesh.normals.push(normal2);
+            solid_mesh.uvs.push([0.0, 0.0]);
+            solid_mesh.colors.push(weights2);
+
+            // Add triangle indices (sequential since vertices are not shared)
+            solid_mesh.indices.push(base_idx);
+            solid_mesh.indices.push(base_idx + 1);
+            solid_mesh.indices.push(base_idx + 2);
         }
-
-        // Copy all indices directly (they should all be valid now)
-        solid_mesh.indices = buffer.indices.clone();
     }
 
     // Water still uses blocky meshing for now
